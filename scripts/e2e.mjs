@@ -126,6 +126,8 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   if (/cheap_de/.test(text)) fail('a German seller got through the Switzerland-only filter');
   if (!text.includes(expectTotal)) fail(`expected the optimal total of ${expectTotal}`);
   if (!/Black Lotus/.test(text)) fail('missing card not reported');
+  const log = await page.locator('#cmopt-root .log').innerText().catch(() => '');
+  if (log && !/Black Lotus: 0 offer\(s\) \(1 page\(s\), 0 offer rows, 0 read\)/.test(log)) fail('no diagnostics for a card without offers');
   if (!requested.some((r) => r.includes('sellerCountry=4'))) fail('country filter not sent');
   await extraChecks?.({ page, text, requested, fail });
   console.log(`--- ${name}: ${requested.length} requests ---\n${requested.join('\n')}\n--- results ---\n${text}\n`);

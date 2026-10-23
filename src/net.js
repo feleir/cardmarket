@@ -8,6 +8,9 @@ export class StoppedError extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Bump when the shape of cached page data changes, so old entries are ignored.
+const CACHE = 'cmopt:c2:';
+
 export class Fetcher {
   constructor({ delayMs = 1200, cacheMinutes = 30, onWait } = {}) {
     this.delayMs = delayMs;
@@ -63,7 +66,7 @@ export class Fetcher {
     const m = this.mem.get(url);
     if (m && Date.now() - m.t < this.ttl) return m.v;
     try {
-      const raw = sessionStorage.getItem('cmopt:c:' + url);
+      const raw = sessionStorage.getItem(CACHE + url);
       if (raw) {
         const e = JSON.parse(raw);
         if (Date.now() - e.t < this.ttl) { this.mem.set(url, e); return e.v; }
@@ -76,18 +79,18 @@ export class Fetcher {
     const e = { t: Date.now(), v };
     this.mem.set(url, e);
     try {
-      sessionStorage.setItem('cmopt:c:' + url, JSON.stringify(e));
+      sessionStorage.setItem(CACHE + url, JSON.stringify(e));
     } catch {
       // Out of space: drop the old cache and keep only memory for this one.
       try {
-        Object.keys(sessionStorage).filter((k) => k.startsWith('cmopt:c:')).forEach((k) => sessionStorage.removeItem(k));
+        Object.keys(sessionStorage).filter((k) => k.startsWith('cmopt:c')).forEach((k) => sessionStorage.removeItem(k));
       } catch { /* ignore */ }
     }
   }
 
   static clearCache() {
     try {
-      Object.keys(sessionStorage).filter((k) => k.startsWith('cmopt:c:')).forEach((k) => sessionStorage.removeItem(k));
+      Object.keys(sessionStorage).filter((k) => k.startsWith('cmopt:c')).forEach((k) => sessionStorage.removeItem(k));
     } catch { /* ignore */ }
   }
 }

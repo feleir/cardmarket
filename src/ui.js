@@ -32,7 +32,7 @@ const CSS = `
 * { box-sizing: border-box; }
 .wrap { position: fixed; inset: 0; overflow: hidden; z-index: 2147483000; display: flex; justify-content: flex-end; background: rgba(0,0,0,.35);
   font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--fg); }
-.panel { --bg:#fff; --fg:#1b1f24; --muted:#5d6670; --line:#e3e6ea; --card:#f6f7f9; --accent:#0a6cff; --ok:#137a3a; --warn:#a35a00;
+.panel { color: var(--fg); --bg:#fff; --fg:#1b1f24; --muted:#5d6670; --line:#e3e6ea; --card:#f6f7f9; --accent:#0a6cff; --ok:#137a3a; --warn:#a35a00;
   background: var(--bg); width: 100%; max-width: 560px; height: 100%; display: flex; flex-direction: column; box-shadow: -4px 0 24px rgba(0,0,0,.2); }
 @media (prefers-color-scheme: dark) { .panel { --bg:#16191d; --fg:#e8eaed; --muted:#9aa3ad; --line:#2c3238; --card:#1f2328; --accent:#5b9dff; --ok:#4cc47a; --warn:#e3a04a; } }
 header { display:flex; align-items:center; gap:8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -221,7 +221,10 @@ export function mount() {
   function viewRun() {
     return `<section><div class="progress"><div style="width:${Math.round(st.progress * 100)}%"></div></div>
       <p class="plabel muted">${st.running ? 'Working…' : 'Idle'}</p></section>
-      <section><div class="log">${esc(st.log.join('\n'))}</div></section>`;
+      <section><div class="log">${esc(st.log.join('\n'))}</div></section>
+      ${st.wants ? `<section><button class="btn sec" data-act="debug">Copy debug report</button>
+        <p class="muted">Copies what the tool saw on Cardmarket (page structure, filters used; no login data) so a reading problem can be fixed.</p>
+        <textarea id="cmopt-debug" readonly hidden></textarea></section>` : ''}`;
   }
 
   function viewResults() {
@@ -297,9 +300,10 @@ export function mount() {
       st.wants = wants;
       await collectOffers(fetcher, wants, s, (i, n, w) => {
         setProgress(i / n, w ? `${i + 1}/${n} · ${w.name}` : 'Optimizing…');
-        if (i > 0) { const p = wants[i - 1]; log(`${p.name}: ${p.offers.length} offer(s)`); }
+        if (i > 0) log(describeWant(wants[i - 1]));
       });
-      log(`${wants.at(-1).name}: ${wants.at(-1).offers.length} offer(s)`);
+      log(describeWant(wants.at(-1)));
+      if (wants.every((w) => !w.offers.length)) log('⚠ No card got any offers. Tap "Copy debug report" below and send it, so the page reading can be fixed.');
       const opts = optOptions();
       const scan = shouldScanSellers(wants, s.scanMode || 'auto');
       if (scan.reason === 'complete') log('Every card page showed all its offers: seller scan not needed.');
@@ -324,6 +328,38 @@ export function mount() {
       st.running = false;
       render();
     }
+  }
+
+  // One log line per card; for a card left with no offers, say whether the
+  // page had none or they were filtered out, and by what.
+  function describeWant(w) {
+    const n = w.offers.length;
+    if (n || !w.diag) return `${w.name}: ${n} offer(s)`;
+    const d = w.diag;
+    const rows = d.pages.reduce((a, p) => a + (p.rows || 0), 0);
+    const parsed = d.pages.reduce((a, p) => a + (p.parsed || 0), 0);
+    const why = Object.entries(d.rejected).map(([k, v]) => `${v} ${k}`).join(', ');
+    const parts = [`${d.pages.length} page(s)`, `${rows} offer rows`, `${parsed} read`];
+    if (why) parts.push(`removed: ${why}`);
+    if (d.versions) parts.push(`${d.versions} printings listed`);
+    if (d.pages.some((p) => p.missing)) parts.push('a page was not found');
+    return `${w.name}: 0 offer(s) (${parts.join(', ')})`;
+  }
+
+  function debugReport() {
+    const s = st.settings;
+    const wants = st.wants || [];
+    const empty = wants.find((w) => w.diag && !w.offers?.length);
+    const pick = (w) => w && { name: w.name, url: w.url, kind: w.kind, quantity: w.quantity, languages: w.languages, minCondition: w.minCondition, flags: w.flags, maxPrice: w.maxPrice, expansion: w.expansion };
+    return JSON.stringify({
+      tool: 'cmopt', at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
+      settings: { sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode },
+      wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length,
+      firstWants: wants.slice(0, 3).map(pick),
+      wantsRowHtml: wants[0]?.rowHtml,
+      emptyCard: empty && { ...pick(empty), diag: empty.diag },
+      log: st.log.slice(-40),
+    }, null, 1);
   }
 
   const optOptions = () => {
@@ -423,6 +459,21 @@ export function mount() {
       case 'copy':
         try { await navigator.clipboard.writeText(asText()); t.textContent = 'Copied ✓'; } catch { prompt('Copy:', asText()); }
         break;
+      case 'debug': {
+        const text = debugReport();
+        try {
+          await navigator.clipboard.writeText(text);
+          t.textContent = 'Copied ✓ — paste it in the chat';
+        } catch {
+          const ta = shadow.getElementById('cmopt-debug');
+          ta.hidden = false;
+          ta.value = text;
+          ta.focus();
+          ta.select();
+          t.textContent = 'Selected — use Copy';
+        }
+        break;
+      }
       case 'clearCache': Fetcher.clearCache(); st.fetcher = null; st.wants = null; t.textContent = 'Cleared ✓'; break;
       case 'reset': st.settings = structuredClone(DEFAULT_SETTINGS); saveSettings(st.settings); render(); break;
       default:

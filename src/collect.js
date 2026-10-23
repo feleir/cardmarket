@@ -40,24 +40,27 @@ export function filterQuery(f) {
 
 const keywordList = (text) => String(text || '').split(/[\n,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 
-export function offerAllowed(o, want, f, settings) {
-  if (f.countries.length && !f.countries.includes(o.countryId)) return false;
-  if (f.languages.length && o.language && !f.languages.includes(o.language)) return false;
-  if (f.minCondition && o.condition && o.condition > f.minCondition) return false;
-  if (f.foil === 'Y' && !o.isFoil) return false;
-  if (f.foil === 'N' && o.isFoil) return false;
-  if (f.signed === 'N' && o.isSigned) return false;
-  if (f.altered === 'N' && o.isAltered) return false;
-  if (want.maxPrice && o.price > want.maxPrice + 1e-9) return false;
-  if (o.rating === 0 ? !settings.allowUnrated : o.rating < (settings.minRating || 0)) return false;
-  const excluded = keywordList(settings.excludeSellers);
-  if (excluded.includes(o.seller.toLowerCase())) return false;
+// Why an offer is rejected, or '' if it is allowed. The reasons are counted
+// per card so a card with no offers says what removed them.
+export function offerVerdict(o, want, f, settings) {
+  if (f.countries.length && !f.countries.includes(o.countryId)) return 'country';
+  if (f.languages.length && o.language && !f.languages.includes(o.language)) return 'language';
+  if (f.minCondition && o.condition && o.condition > f.minCondition) return 'condition';
+  if (f.foil === 'Y' && !o.isFoil) return 'foil';
+  if (f.foil === 'N' && o.isFoil) return 'foil';
+  if (f.signed === 'N' && o.isSigned) return 'signed';
+  if (f.altered === 'N' && o.isAltered) return 'altered';
+  if (want.maxPrice && o.price > want.maxPrice + 1e-9) return 'max price';
+  if (o.rating === 0 ? !settings.allowUnrated : o.rating < (settings.minRating || 0)) return 'rating';
+  if (keywordList(settings.excludeSellers).includes(o.seller.toLowerCase())) return 'blocked seller';
   if (want.kind === 'card') {
     const exp = (o.expansion || '').toLowerCase();
-    if (keywordList(settings.excludeExpansions).some((k) => exp.includes(k))) return false;
+    if (keywordList(settings.excludeExpansions).some((k) => exp.includes(k))) return 'expansion';
   }
-  return true;
+  return '';
 }
+
+export const offerAllowed = (o, want, f, settings) => !offerVerdict(o, want, f, settings);
 
 export async function loadWantsList(fetcher, listUrl, log) {
   const base = toEnglish(listUrl).replace(/[?#].*$/, '');
@@ -75,13 +78,33 @@ export async function loadWantsList(fetcher, listUrl, log) {
   return wants.filter((w) => (seen.has(w.idWant) ? false : seen.add(w.idWant)));
 }
 
+// What a fetched page looked like, kept small: enough to tell "the page had
+// no offers" from "the page had offers we could not read".
+function pageDiag(doc, url, offers) {
+  if (!doc) return { url, missing: true };
+  const rows = doc.querySelectorAll('.article-row');
+  const sample = rows[0] || doc.querySelector('#table, .table-body, main') || doc.body;
+  return {
+    url,
+    title: (doc.title || '').trim().slice(0, 120),
+    rows: rows.length,
+    sellerRows: [...rows].filter((r) => r.querySelector('.seller-name a[href*="/Users/"]')).length,
+    parsed: offers.length,
+    sample: (sample?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 2500),
+  };
+}
+
 async function offersAt(fetcher, url) {
   const hit = fetcher.cached(url);
   if (hit) return hit;
   const doc = await fetcher.doc(url);
-  const v = doc
-    ? { offers: parseOffers(doc, url), versions: /\/Cards\//.test(url) ? parseVersionLinks(doc, url) : [], truncated: isTruncated(doc) }
-    : { offers: [], versions: [], truncated: false };
+  const offers = doc ? parseOffers(doc, url) : [];
+  const v = {
+    offers,
+    versions: doc && /\/Cards\//.test(url) ? parseVersionLinks(doc, url) : [],
+    truncated: doc ? isTruncated(doc) : false,
+    diag: pageDiag(doc, url, offers),
+  };
   fetcher.store(url, v);
   return v;
 }
@@ -98,6 +121,7 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     const page = await offersAt(fetcher, `${path}?${qs}`);
     found.push(...page.offers);
     let truncated = !!page.truncated;
+    const diag = { pages: [page.diag], versions: page.versions.length, rejected: {} };
     // An any-printing want whose card page lists printings but no offers:
     // visit the cheapest printings one by one.
     if (want.kind === 'card' && !page.offers.length && page.versions.length) {
@@ -109,11 +133,19 @@ export async function collectOffers(fetcher, wants, settings, progress) {
         const r = await offersAt(fetcher, `${toEnglish(v.url)}?${qs}`);
         found.push(...r.offers.map((o) => ({ ...o, expansion: o.expansion || v.expansion })));
         truncated ||= !!r.truncated;
+        diag.pages.push(r.diag);
       }
     }
     const seen = new Set();
-    found = found.filter((o) => !seen.has(o.id) && seen.add(o.id) && offerAllowed(o, want, f, settings));
+    found = found.filter((o) => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      const why = offerVerdict(o, want, f, settings);
+      if (why) diag.rejected[why] = (diag.rejected[why] || 0) + 1;
+      return !why;
+    });
     want.offers = found;
+    want.diag = diag;
     want.truncated = truncated;
     want.filters = f;
     want.key = want.idWant;

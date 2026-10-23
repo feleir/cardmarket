@@ -118,7 +118,9 @@ export function parseWantsList(doc) {
     let expansion = tipOf(expEl) || flat(tr.querySelector('td.expansion')?.textContent);
     if (/^any$/i.test(expansion)) expansion = '';
 
-    wants.push({ idWant, name, url: href, kind, quantity, languages, minCondition, flags, maxPrice, expansion });
+    wants.push({ idWant, name, url: href, kind, quantity, languages, minCondition, flags, maxPrice, expansion,
+      // The first row's markup, for the debug report.
+      ...(wants.length ? {} : { rowHtml: tr.outerHTML.replace(/\s+/g, ' ').slice(0, 2500) }) });
   }
   return wants;
 }
