@@ -358,6 +358,7 @@ export function mount() {
       firstWants: wants.slice(0, 3).map(pick),
       wantsRowHtml: wants[0]?.rowHtml,
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
+      unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
       log: st.log.slice(-40),
     }, null, 1);
   }

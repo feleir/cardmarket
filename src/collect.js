@@ -91,6 +91,8 @@ function pageDiag(doc, url, offers) {
     sellerRows: [...rows].filter((r) => r.querySelector('.seller-name a[href*="/Users/"]')).length,
     parsed: offers.length,
     sample: (sample?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 2500),
+    // A row that was on the page but could not be read, if any.
+    unread: ([...rows].find((r) => !offers.some((o) => r.id.endsWith(o.id)))?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 3000) || undefined,
   };
 }
 

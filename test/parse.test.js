@@ -132,3 +132,38 @@ test('detects card pages that hold back offers', async () => {
   assert.equal(shouldScanSellers([{}], 'always').run, true);
   assert.equal(shouldScanSellers([{ truncated: true }], 'off').run, false);
 });
+
+// A real offer row as Cardmarket serves it (from a live debug report): every
+// tooltip is a plain title attribute. Reading the location from
+// data-bs-original-title only made every seller "no country", and the
+// Switzerland filter then removed all offers.
+const LIVE_ROW = `<div id="articleRow1892661503" class="row g-0 article-row"><div class="d-none col"></div><div class="col-sellerProductInfo col"><div class="row g-0"><div class="col-seller col-12 col-lg-auto"><span class="seller-info d-flex align-items-center"><span class="seller-extended d-flex"><span class="d-flex has-content-centered me-1"><span title="Outstanding" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="fonticon-seller-rating-outstanding"><span class="path1"></span><span class="path2"></span></span></span><span title="750&nbsp;Sales&nbsp;|&nbsp;19500&nbsp;Available items" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="badge text-bg-faded d-none d-sm-inline-flex has-content-centered me-1 sell-count">750</span><span class="d-none d-sm-inline-flex has-content-centered me-1"><span title="&lt;div&gt;Estimated delivery time for LastTryTCG : 4 days&lt;/div&gt;&lt;span class=&quot;small fst-italic&quot;&gt;(Avg. delivery time from Switzerland to Spain : 4 days)&lt;/span&gt;" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="fonticon-calendar "><span class="shippingTime-info">4</span></span></span></span><span class="seller-name d-flex"><span title="Item location: Switzerland" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="icon d-flex has-content-centered me-1"><span style="display: inline-block; width: 16px; height: 16px;" class="icon"></span></span><span class="d-flex has-content-centered me-1"><a href="/en/Magic/Users/LastTryTCG">LastTryTCG</a></span><span class="d-flex text-nowrap ms-lg-auto"></span></span></span></div><div class="col-product col-12 col-lg"><div class="row g-0"><div class="product-attributes col"><a href="https://help.cardmarket.com/en/CardCondition" target="_blank" title="Near Mint" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="article-condition condition-nm me-1"><span class="badge ">NM</span></a><span style="display: inline-block; width: 16px; height: 16px;" title="English" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="icon me-2"></span></div></div></div></div></div><div class="col-offer col-auto"><div class="price-container d-none d-md-flex justify-content-end"><div class="d-flex flex-column"><div class="d-flex align-items-center justify-content-end"><span class="color-primary small text-end text-nowrap fw-bold ">0,25 €</span></div></div></div><div class="amount-container d-none d-md-flex justify-content-end me-3"><span class="item-count small text-end">3</span></div></div></div>`;
+
+test('live offer row: country, rating, condition and language from title attributes', () => {
+  const html = productPage({ title: 'Acidic Sliver', expansion: 'Stronghold', rows: [LIVE_ROW] });
+  const [o] = parseOffers(doc(html), '/en/Magic/Products/Singles/Stronghold/Acidic-Sliver?sellerCountry=4');
+  assert.equal(o.seller, 'LastTryTCG');
+  assert.equal(o.countryName, 'Switzerland');
+  assert.equal(o.countryId, 4);
+  assert.equal(o.rating, 5);
+  assert.equal(o.sales, 750);
+  assert.equal(o.condition, 2);
+  assert.equal(o.language, 1);
+  assert.equal(o.price, 0.25);
+  assert.equal(o.available, 3);
+  assert.equal(o.expansion, 'Stronghold');
+  const want = { kind: 'product', languages: [], minCondition: 5, flags: {}, maxPrice: 0 };
+  const f = wantFilters(want, { ...DEFAULT_SETTINGS, sellerCountries: [4] });
+  assert.equal(offerAllowed(o, want, f, DEFAULT_SETTINGS), true);
+});
+
+// The live wants row from the same report.
+const LIVE_WANT = `<table><tbody><tr><td class="select min-size p-2"><div class="form-check no-label"><input type="checkbox" name="checkWantsRow[]" data-id-want="6ada448e800ad0fe84026cad" class="form-check-input mb-1 me-2"></div></td><td class="preview min-size d-none d-sm-table-cell p-2"></td><td data-amount="3" class="amount min-size text-center p-2">3</td><td class="name min-size text-start p-2"><a href="/en/Magic/Products/Singles/Stronghold/Acidic-Sliver?sellerCountry=4">Acidic Sliver</a></td><td class="expansion d-none d-sm-table-cell p-2"><div class="d-flex flex-wrap has-content-centered"><span title="Stronghold" data-bs-toggle="tooltip" class="expansion-symbol is-magic icon is-24x24"></span><span class="visually-hidden">Stronghold</span></div></td><td class="languages min-size p-2"><span class="visually-hidden">Any</span></td><td class="condition min-size p-2"><div class="d-flex has-content-centered"><span class="me-1">≥</span><a href="https://help.cardmarket.com/en/CardCondition" target="_blank" title="Light Played" class="article-condition condition-lp"><span class="badge ">LP</span></a><span class="visually-hidden">Light Played</span></div></td><td class="min-size d-none d-lg-table-cell ternary-header p-2"><span class="visually-hidden">Any</span></td><td data-text="0" class="buyPrice min-size text-end p-2"></td></tr></tbody></table>`;
+
+test('live wants row', () => {
+  const [w] = parseWantsList(doc(`<!doctype html><html><body>${LIVE_WANT}</body></html>`));
+  assert.deepEqual(
+    { name: w.name, kind: w.kind, q: w.quantity, langs: w.languages, cond: w.minCondition, exp: w.expansion, max: w.maxPrice, flags: w.flags },
+    { name: 'Acidic Sliver', kind: 'product', q: 3, langs: [], cond: 5, exp: 'Stronghold', max: 0, flags: {} },
+  );
+});

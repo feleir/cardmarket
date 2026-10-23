@@ -8,6 +8,13 @@ import { RATINGS, conditionByCode, countryByName, languageByName } from './const
 const tipOf = (el) => (el && (el.getAttribute('aria-label') || el.getAttribute('data-bs-original-title')
   || el.getAttribute('data-original-title') || el.getAttribute('title') || '').trim()) || '';
 
+// Tooltip text sits in a plain title attribute in the HTML Cardmarket
+// serves; Bootstrap moves it to data-bs-original-title (and some pages use
+// aria-label) only once its script runs in a live tab. Fetched pages never
+// ran it, so every lookup must accept all of them.
+const TIP = '[title],[aria-label],[data-bs-original-title],[data-original-title]';
+const tipsIn = (root, scope = '') => [...root.querySelectorAll(TIP.split(',').map((t) => `${scope}${t}`).join(','))];
+
 const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
 // "1.234,56 €", "€1,234.56", "0,02 €" -> number. The decimal separator is
@@ -56,7 +63,7 @@ function headerColumns(table) {
   if (!table) return cols;
   const heads = [...table.querySelectorAll('thead th')];
   heads.forEach((th, i) => {
-    const label = flat(tipOf(th.querySelector('[aria-label],[data-bs-original-title],[title]')) || th.textContent);
+    const label = flat(tipOf(th.querySelector(TIP)) || th.textContent);
     for (const [name, re] of TERNARY_WORDS) {
       if (re.test(label) && !(name in cols)) { cols[name] = i; break; }
     }
@@ -67,7 +74,7 @@ function headerColumns(table) {
 function ternaryOf(td) {
   if (!td) return 'any';
   const t = flat(td.textContent).toUpperCase();
-  const tip = tipOf(td.querySelector('[aria-label],[data-bs-original-title],[title]')).toLowerCase();
+  const tip = tipOf(td.querySelector(TIP)).toLowerCase();
   if (t === 'Y' || td.querySelector('[name="yes"], .fonticon-check') || tip === 'yes') return 'Y';
   if (t === 'N' || td.querySelector('[name="no"], .fonticon-cross, .fonticon-close') || tip === 'no') return 'N';
   return 'any';
@@ -96,7 +103,7 @@ export function parseWantsList(doc) {
 
     const langTd = tr.querySelector('td.languages');
     const languages = langTd
-      ? [...new Set([...langTd.querySelectorAll('[aria-label],[data-bs-original-title],[title]')]
+      ? [...new Set(tipsIn(langTd)
           .map((e) => languageByName(tipOf(e))?.id).filter(Boolean))]
       : [];
 
@@ -156,8 +163,7 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
     if (!sellerLink && !seller) continue; // own stock rows and table headers have no seller
     const sellerName = sellerLink ? flat(sellerLink.textContent) : seller.seller;
 
-    const locEl = [...row.querySelectorAll('.seller-name [aria-label], .seller-name [data-bs-original-title]')]
-      .find((e) => /location/i.test(tipOf(e)));
+    const locEl = tipsIn(row, '.seller-name ').find((e) => /location/i.test(tipOf(e)));
     const countryName = locEl ? tipOf(locEl).replace(/^.*?:\s*/, '') : seller?.countryName || '';
     const country = countryByName(countryName);
 
@@ -169,9 +175,9 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
 
     const attrs = row.querySelector('.product-attributes') || row;
     const condition = conditionByCode(flat(attrs.querySelector('.article-condition .badge, .article-condition')?.textContent))?.id || 0;
-    const tips = [...attrs.querySelectorAll('[aria-label],[data-bs-original-title],[data-original-title],[title]')].map(tipOf);
+    const tips = tipsIn(attrs).map(tipOf);
     const language = tips.map(languageByName).find(Boolean)?.id || 0;
-    const isFoil = tips.some((t) => /^(reverse holo|foil|holo)/i.test(t)) || !!attrs.querySelector('.st_SpecialIcon[aria-label*="oil" i]');
+    const isFoil = tips.some((t) => /^(reverse holo|foil|holo)/i.test(t)) || tipsIn(attrs, '.st_SpecialIcon').some((e) => /foil/i.test(tipOf(e)));
     const isSigned = tips.some((t) => /^signed/i.test(t));
     const isAltered = tips.some((t) => /^altered/i.test(t));
 
