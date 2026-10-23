@@ -9,6 +9,7 @@
 // Nothing counts as added until the cart page shows the article. Every step
 // is kept in `cartLog` for the debug report.
 import { filterQuery } from './collect.js';
+import { isChallengePage } from './parse.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
@@ -20,6 +21,8 @@ const note = (entry) => { cartLog.push({ at: new Date().toISOString(), ...entry 
 export async function cartArticleIds() {
   const r = await fetch(`/en/${game()}/ShoppingCart`, { credentials: 'include' });
   const html = await r.text();
+  // The browser check instead of the cart: nothing can be told about it.
+  if (isChallengePage(html)) return Object.assign(new Set(), { html: '', check: true });
   const ids = new Set(html.match(/\d+/g) || []);
   ids.html = html;
   return ids;
@@ -40,16 +43,37 @@ function cartEvidence(html, items) {
 const pageOf = (it) => it.offer.pageUrl
   || `${it.offer.productUrl}${it.want?.filters ? `?${filterQuery(it.want.filters)}` : ''}`;
 
+// Cardmarket's Cloudflare protection can answer a page load with its
+// browser check ("Just a moment..."). It sometimes clears by itself after a
+// few seconds (the frame then reloads); one that needs the user cannot be
+// passed in a hidden frame.
+export class CheckPageError extends Error {}
+const isCheckDoc = (doc) => !!doc && (/just a moment|attention required/i.test(doc.title || '') || isChallengePage(doc.documentElement?.outerHTML.slice(0, 5000)));
+
+// Resolves { frame, check } once the page shows offer rows (plus a moment
+// for the site's scripts to bind), or after 30 s.
 function openFrame(url) {
   return new Promise((resolve) => {
     const f = document.createElement('iframe');
     // Desktop width, so the page renders the desktop cart form; off-screen.
     f.style.cssText = 'position:fixed;left:-20000px;top:0;width:1280px;height:900px;border:0;opacity:0;pointer-events:none';
     f.setAttribute('aria-hidden', 'true');
-    let done = false;
-    const finish = (ok) => { if (!done) { done = true; resolve(ok ? f : (f.remove(), null)); } };
-    f.addEventListener('load', () => setTimeout(() => finish(true), 1500)); // let the site's scripts bind
-    setTimeout(() => finish(false), 25000);
+    const start = Date.now();
+    const poll = setInterval(() => {
+      let doc = null;
+      try { doc = f.contentDocument; } catch { /* not readable yet */ }
+      const ready = doc && doc.readyState === 'complete' && doc.querySelector('.article-row');
+      if (ready) {
+        clearInterval(poll);
+        setTimeout(() => resolve({ frame: f }), 1500); // let the site's scripts bind
+      } else if (Date.now() - start > 30000) {
+        clearInterval(poll);
+        resolve({ frame: f, check: isCheckDoc(doc) });
+      } else if (doc && doc.readyState === 'complete' && !isCheckDoc(doc) && Date.now() - start > 8000 && doc.location.href !== 'about:blank') {
+        clearInterval(poll); // a normal page without offers: no point waiting longer
+        resolve({ frame: f });
+      }
+    }, 300);
     f.src = url;
     document.body.appendChild(f);
   });
@@ -122,19 +146,28 @@ function pressAdd(doc, offer, amount) {
   return '';
 }
 
-async function pressAll(items, onEach) {
+async function pressAll(items, onEach, pause) {
   const byPage = new Map();
   for (const it of items) {
     const url = pageOf(it);
     if (!byPage.has(url)) byPage.set(url, []);
     byPage.get(url).push(it);
   }
+  let first = true;
   for (const [url, list] of byPage) {
-    const frame = await openFrame(url);
-    const doc = frame?.contentDocument;
+    if (!first) await sleep(pause);
+    first = false;
+    const { frame, check } = await openFrame(url);
+    let doc = null;
+    try { doc = frame.contentDocument; } catch { /* ignore */ }
+    if (check || isCheckDoc(doc)) {
+      note({ step: 'frame', url, error: 'Cardmarket showed its browser check instead of the page', title: doc?.title });
+      frame.remove();
+      throw new CheckPageError('check');
+    }
     if (!doc || !doc.querySelector('.article-row')) {
-      note({ step: 'frame', url, error: frame ? 'page opened but has no offer rows' : 'page could not be opened in the background (blocked or timed out)', title: doc?.title });
-      frame?.remove();
+      note({ step: 'frame', url, error: doc ? 'page opened but has no offer rows' : 'page could not be opened in the background', title: doc?.title });
+      frame.remove();
       list.forEach((it) => onEach?.(it, 'sent'));
       continue;
     }
@@ -156,20 +189,45 @@ async function pressAll(items, onEach) {
 
 // items: [{ offer, want, quantity }]. onEach(item, state): 'sent' | 'added' | 'failed'.
 // Anything not in the cart after the first pass is pressed once more.
-export async function addAll(items, onEach) {
-  await pressAll(items, onEach);
+// Returns { added, failed, check } where check means Cardmarket's browser
+// check stopped the run (the user has to pass it in the tab, then retry).
+export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
+  let check = false;
+  // Articles already in the cart are not pressed again, so running "Add all"
+  // a second time (after a browser check, say) never doubles anything.
+  const before = await cartArticleIds();
+  if (before.check) {
+    note({ step: 'check', added: 0, check: true, error: 'the cart page showed the browser check' });
+    return { added: [], failed: items, check: true };
+  }
+  const toSend = items.filter((it) => !before.has(it.offer.id));
+  if (toSend.length < items.length) note({ step: 'skip', alreadyInCart: items.length - toSend.length });
+  items.filter((it) => before.has(it.offer.id)).forEach((it) => onEach?.(it, 'sent'));
+  try {
+    await pressAll(toSend, onEach, pauseMs);
+  } catch (e) {
+    if (!(e instanceof CheckPageError)) throw e;
+    check = true;
+  }
   let inCart = await cartArticleIds();
-  const retry = items.filter((it) => !inCart.has(it.offer.id));
+  if (inCart.check) check = true;
+  const retry = check ? [] : items.filter((it) => !inCart.has(it.offer.id));
   if (retry.length) {
     note({ step: 'retry', articles: retry.map((i) => i.offer.id) });
-    await pressAll(retry);
+    try {
+      await pressAll(retry, null, pauseMs);
+    } catch (e) {
+      if (!(e instanceof CheckPageError)) throw e;
+      check = true;
+    }
     inCart = await cartArticleIds();
+    if (inCart.check) check = true;
   }
   const added = items.filter((it) => inCart.has(it.offer.id));
   const failed = items.filter((it) => !inCart.has(it.offer.id));
-  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), ...(failed.length ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
-  for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : 'failed');
-  return { added, failed };
+  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), check, ...(failed.length && !inCart.check ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
+  for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : inCart.check ? 'unknown' : 'failed');
+  return { added, failed, check };
 }
 
 // What the live page's own cart code looks like, for the debug report when

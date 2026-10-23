@@ -116,17 +116,20 @@ const highsDir = `${process.cwd()}/node_modules/highs/build/`;
 await mkdir('e2e-out', { recursive: true });
 const bm = await readFile('dist/bookmarklet.txt', 'utf8');
 
+const requestedCount = { ajax: 0 };
+let checkPages = false; // serve Cloudflare's "Just a moment..." for card pages
 async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   const ctx = await browser.newContext({ ...pw.devices['Pixel 7'] });
   const page = await ctx.newPage();
   const requested = [];
   await page.route('https://www.cardmarket.com/**', async (route) => {
     const u = new URL(route.request().url());
-    if (u.pathname.startsWith('/en/Magic/AjaxAction/')) await new Promise((r) => setTimeout(r, 4000)); // a slow answer
+    if (u.pathname.startsWith('/en/Magic/AjaxAction/')) { requestedCount.ajax++; await new Promise((r) => setTimeout(r, 4000)); } // a slow answer
     requested.push(u.pathname + u.search);
     const m = u.pathname.match(/^\/en\/Magic\/Users\/([^/]+)\/Offers\/Singles$/);
     let html = cartRoute(u, route.request()) ?? (m ? sellerPage(m[1], u.searchParams) : pages[u.pathname]);
     if (!html) return route.fulfill({ status: 404, body: 'not found' });
+    if (checkPages && html.includes('article-row')) html = '<!doctype html><html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>';
     if (html.includes('article-row')) html = html.replace('</body>', `${pageScript}</body>`);
     if (cutOff.includes(u.pathname)) html = html.replace('</body>', '<button class="btn btn-primary">Show more results</button></body>');
     return route.fulfill({ status: 200, contentType: 'text/html', body: html });
@@ -180,6 +183,21 @@ await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ pag
   if (!/All 4 added to your cart/.test(after)) fail('cart result not reported');
   if ((after.match(/In cart ✓/g) || []).length !== 4) fail('items not marked as in the cart');
   await page.screenshot({ path: 'e2e-out/complete-pages-3-cart.png' });
+
+  // Running it again sends nothing: everything is already in the cart.
+  const posts = () => requestedCount.ajax;
+  const sentBefore = posts();
+  await page.click('#cmopt-root >> text=Add all to cart');
+  await page.waitForSelector('#cmopt-root >> text=All 4 added to your cart', { timeout: 30000 }).catch(() => {});
+  if (posts() !== sentBefore) fail('a second "Add all" pressed items already in the cart');
+
+  // A browser check on the card pages stops it with an explanation.
+  cart.delete('12');
+  checkPages = true;
+  await page.click('#cmopt-root >> text=Add all to cart');
+  await page.waitForSelector('#cmopt-root >> text=browser check', { timeout: 60000 }).catch(() => {});
+  if (!/Cardmarket is showing its browser check/.test(await page.locator('#cmopt-root main').innerText())) fail('browser check not reported');
+  checkPages = false;
 });
 
 // Everything from bigstore_ch in one tracked parcel: 60,50 + 2,00 + 2,60 + 8,50.

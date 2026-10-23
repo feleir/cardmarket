@@ -443,14 +443,16 @@ export function mount() {
     const label = (txt) => { if (btn && btn.isConnected) btn.textContent = txt; };
     if (btn) btn.disabled = true;
     try {
-      const { added, failed } = await addAll(items, (it, state) => {
+      const { added, failed, check } = await addAll(items, (it, state) => {
         if (state === 'sent') label(`Sending ${++sent}/${items.length}…`);
-        else st.cartState.set(it.offer.id, state);
+        else if (state !== 'unknown') st.cartState.set(it.offer.id, state);
         if (sent === items.length) label('Checking the cart…');
-      });
-      st.cartMsg = failed.length
-        ? { ok: false, text: `${added.length} of ${items.length} added to your cart. ${failed.length} could not be added; they are marked below with a link to the card.` }
-        : { ok: true, text: `All ${added.length} added to your cart.` };
+      }, { pauseMs: st.settings.delayMs });
+      st.cartMsg = check
+        ? { ok: false, text: `Cardmarket is showing its browser check ("Just a moment…"), so adding stopped${added.length ? ` after ${added.length} item(s)` : ''}. Open any Cardmarket page in this tab, wait until the check passes (tick the box if asked), then run cmopt and tap "Add all to cart" again. Items already in your cart stay there and are skipped.` }
+        : failed.length
+          ? { ok: false, text: `${added.length} of ${items.length} added to your cart. ${failed.length} could not be added; they are marked below with a link to the card.` }
+          : { ok: true, text: `All ${added.length} added to your cart.` };
     } catch (e) {
       st.cartMsg = { ok: false, text: 'Adding to the cart failed: ' + (e.message || e) };
     }
