@@ -90,6 +90,7 @@ export const DEFAULT_SETTINGS = {
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels
   delayMs: 1200,
   timeBudgetMs: 3000,
+  scanMode: 'auto',       // 'auto' (only if a card page was cut off) | 'always' | 'off'
   scanSellers: 10,        // sellers whose whole wants-matching stock is read
   exact: false,           // also run the exact solver (downloads ~3.5 MB once)
   exactTimeMs: 15000,

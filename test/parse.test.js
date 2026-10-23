@@ -117,3 +117,18 @@ test('seller-page offers are matched back to wants', async () => {
   assert.deepEqual(pickSellersToScan(ws, ['d'], 2).map((o) => o.seller), ['d', 'a']);
   assert.deepEqual(pickSellersToScan(ws, [], 3).map((o) => o.seller), ['a', 'b', 'c']);
 });
+
+test('detects card pages that hold back offers', async () => {
+  const { isTruncated, FULL_BATCH } = await import('../src/parse.js');
+  const { shouldScanSellers } = await import('../src/collect.js');
+  const rows = (n) => Array.from({ length: n }, (_, i) => offerRow({ id: i + 1, seller: `s${i}` }));
+  assert.equal(isTruncated(doc(productPage({ title: 'X', expansion: 'Y', rows: rows(3) }))), false);
+  assert.equal(isTruncated(doc(productPage({ title: 'X', expansion: 'Y', rows: rows(FULL_BATCH) }))), true);
+  assert.equal(isTruncated(doc(productPage({ title: 'X', expansion: 'Y', rows: rows(3) }).replace('</body>', '<button class="btn">Show more results</button></body>'))), true);
+  assert.equal(isTruncated(doc(productPage({ title: 'X', expansion: 'Y', rows: rows(3) }).replace('</body>', '<div id="loadMoreButton"></div></body>'))), true);
+
+  assert.deepEqual(shouldScanSellers([{ truncated: false }], 'auto'), { run: false, reason: 'complete', cut: 0 });
+  assert.equal(shouldScanSellers([{ truncated: true }, {}], 'auto').run, true);
+  assert.equal(shouldScanSellers([{}], 'always').run, true);
+  assert.equal(shouldScanSellers([{ truncated: true }], 'off').run, false);
+});

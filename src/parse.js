@@ -225,6 +225,19 @@ export function parseVersionLinks(doc, cardUrl) {
   return [...out.values()];
 }
 
+// Did the page hold back offers? Cardmarket lists the cheapest batch and
+// loads the rest on request. Its exact markup for that could not be checked
+// live, so look for any "load / show more" control, and treat a page with a
+// full-looking batch of rows as cut off too.
+export const FULL_BATCH = 50;
+export function isTruncated(doc) {
+  const rows = doc.querySelectorAll('.article-row').length;
+  if (rows >= FULL_BATCH) return true;
+  if (doc.querySelector('#loadMore, #loadMoreButton, .load-more, [id*="loadMore" i], [class*="loadMore" i], [data-ajax-action*="LoadMore" i], [onclick*="loadMore" i]')) return true;
+  return [...doc.querySelectorAll('button, a.btn, a[role="button"]')]
+    .some((b) => /^(show|load)\s+more|more results|mehr (anzeigen|laden)|weitere (anzeigen|laden)/i.test(flat(b.textContent)));
+}
+
 export function cartCount(doc) {
   const el = doc.querySelector('#cart .badge, .shopping-cart .badge, a[href*="ShoppingCart"] .badge');
   return parseInt(flat(el?.textContent), 10) || 0;

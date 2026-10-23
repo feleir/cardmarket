@@ -5,7 +5,7 @@ import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING } 
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
-import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers } from './collect.js';
+import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers } from './collect.js';
 import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
 import { addToCart, addAll } from './cart.js';
@@ -192,9 +192,13 @@ export function mount() {
         <div><label>Extra cost per seller €</label><input type="number" min="0" step="0.1" data-k="sellerPenalty" value="${s.sellerPenalty}"></div>
       </div>
       <p class="muted">"Extra cost per seller" makes the optimizer prefer fewer parcels unless splitting saves more than that amount.</p>
-      <label>Deep-scan the stock of this many top sellers</label>
-      <input type="number" min="0" max="50" data-k="scanSellers" value="${s.scanSellers}">
-      <p class="muted">Card pages only list the cheapest offers. The sellers that matter most get their whole stock read, filtered by your wants list, so bundles hidden past the first page are found (about 1–2 pages per seller).</p>
+      <div class="row">
+        <div><label>Seller scan</label><select data-k="scanMode">
+          ${[['auto', 'Auto'], ['always', 'Always'], ['off', 'Off']].map(([v, t]) => `<option value="${v}" ${s.scanMode === v ? 'selected' : ''}>${t}</option>`).join('')}
+        </select></div>
+        <div><label>Sellers to scan</label><input type="number" min="1" max="50" data-k="scanSellers" value="${s.scanSellers}"></div>
+      </div>
+      <p class="muted">Card pages show the cheapest offers first and hold the rest back. <b>Auto</b> reads the top sellers' whole stock (filtered by your wants list) only when some card page was cut off, so sellers hidden there are not missed. If every page showed all its offers, the card scan is already complete and this is skipped.</p>
       <label><input type="checkbox" data-k="exact" ${s.exact ? 'checked' : ''}> Exact solver — proves the cheapest cart (downloads ≈3.5 MB once; not used with a seller cap)</label>
       <details><summary>Shipping estimates</summary>
         <p class="muted">One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. Check real prices for your country on Cardmarket's Shipping Costs help page.</p>
@@ -297,7 +301,10 @@ export function mount() {
       });
       log(`${wants.at(-1).name}: ${wants.at(-1).offers.length} offer(s)`);
       const opts = optOptions();
-      if (s.scanSellers > 0) {
+      const scan = shouldScanSellers(wants, s.scanMode || 'auto');
+      if (scan.reason === 'complete') log('Every card page showed all its offers: seller scan not needed.');
+      if (scan.reason === 'truncated') log(`${scan.cut} card page(s) held back offers: scanning sellers for hidden copies.`);
+      if (scan.run && s.scanSellers > 0) {
         // A quick first cart says which sellers matter; their full stock
         // matching the wants list may hold copies the card pages did not show.
         const first = optimize(wants, { ...opts, timeBudgetMs: Math.min(1000, s.timeBudgetMs) });

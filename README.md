@@ -56,11 +56,18 @@ It picks one offer per wanted copy so that the cost below is as low as possible:
 
 It respects each article's available quantity, and an article listed under two wants is only bought as often as it is in stock. You can cap the number of sellers. Shipping per seller is the cheapest tier that fits the parcel. Cardmarket requires tracked shipping above €25, so the untracked tiers stop there.
 
-### 1. Find every seller worth considering (deep seller scan)
+### 1. Collect offers: card scan first, seller scan only when needed
 
-A card's page only lists the cheapest offers for *that card*. So a seller who has 10 of your cards at slightly higher prices may show up for only one of them, or for none, even though one parcel from them could replace five. After a first pass, the tool takes the sellers who appeared for the most of your cards plus everyone in the cart (10 by default). For each, it reads that seller's whole stock **filtered by your wants list**, every page of it.
+Every card on the wants list is looked up on its card page with your filters, and every offer there, from every seller, goes into one pool. The optimizer buckets that pool by seller. That **card scan** is the main data source.
 
-The filter's parameter name isn't hard-coded. It's read from the seller page's own filter form, from the option whose value is your wants list id. Every offer found this way goes through the same checks: country, language, condition, foil, max price, rating, blocked sellers.
+The weak spot: a card page shows the cheapest batch of offers and holds the rest back behind "show more". A seller who has many of your cards, each a little above the cheapest, can be hidden on every one of those pages, and that is exactly the seller a single parcel could come from. So each card page is checked for being cut off (a "show more / load more" control, or a full batch of 50 rows).
+
+**Seller scan** (Setup → Optimizer → Seller scan):
+- **Auto** (default): if no card page was cut off, the card scan already saw every offer and nothing more is fetched. Typical with a single seller country. If some pages were cut off, it reads the whole stock of the top sellers (10 by default), **filtered by your wants list**, every page of it. "Top" means sellers who appeared for the most of your cards; cards whose page was cut off count double, plus everyone already in the cart.
+- **Always**: scan even when every page was complete.
+- **Off**: never scan.
+
+The filter's parameter name isn't hard-coded. It's read from the seller page's own filter form. Every offer found this way goes through the same checks as the card scan.
 
 ### 2. Optimize
 
@@ -106,7 +113,8 @@ The e2e test checks four things:
 - the total matches a hand-computed optimum;
 - a card with no offers is reported;
 - "Add all to cart" replays Cardmarket's own add-to-cart form, with the right article ids and amounts;
-- a second run with the seller scan and exact solver finds a hidden bundle: a store that shows up only on the Counterspell page also stocks Sheoldred and the Bolts on page 2 of its wants-filtered stock. The best cart drops from €75.90 (3 parcels) to €73.60 (1 parcel).
+- with every card page complete, Auto skips the seller scan (no seller pages fetched);
+- when the Counterspell page is cut off, Auto runs the scan, and with the exact solver it finds a hidden bundle: a store that shows up only on the Counterspell page also stocks Sheoldred and the Bolts on page 2 of its wants-filtered stock. The best cart drops from €75.90 (3 parcels) to €73.60 (1 parcel).
 
 ## Limitations: please check on the live site
 
@@ -115,7 +123,7 @@ My build environment can't reach cardmarket.com, so the markup comes from real p
 - **Offer rows** (`.article-row`, `Item location:` tooltip, `.price-container`, `.item-count`, the `ShoppingCart_Add_AddArticlesFromProductPage` form) match real captured HTML.
 - **Wants list table** (`#WantsListTable`, `input[data-id-want]`, `td.amount`, `td.languages`, ternary columns) is rebuilt from other tools' parsers.
 - **"Any printing" wants** link to `/Cards/<name>`. If that page lists offers, they're used directly. Otherwise the tool follows the printing links and fetches the cheapest `maxVersions` printings.
-- **Only the first page of offers** per card is read (Cardmarket shows the cheapest matching offers first). The deep seller scan covers what that misses for the sellers that matter most.
+- **Only the first batch of offers** per card is read (Cardmarket shows the cheapest matching offers first). Whether a page was cut off is guessed from a "show more" control or a full batch of 50 rows. I couldn't check the exact markup and batch size live. When a page is cut off, the seller scan (Auto) covers the sellers that matter most.
 - **Seller scan:** the wants-list filter on seller pages is found from the page's own filter form. If none can be confirmed, the scan is skipped and the log says so.
 - **Add to cart** submits a copy of the row's own form inside the live page, so Cardmarket's own script and token handle it. If no script picks it up, it opens Cardmarket's "put in cart" dialog instead. If that also fails, it opens the product page.
 - **Shipping** is an estimate. Check the tiers for your country on Cardmarket's *Shipping Costs* help page. The cart always shows the real amount before you pay.

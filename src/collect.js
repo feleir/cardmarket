@@ -1,7 +1,7 @@
 // Turns a wants list into candidate offers per want: builds Cardmarket's
 // filter URLs from the want and the user's settings, fetches the pages, and
 // re-checks every offer against the same rules client-side.
-import { parseOffers, parseVersionLinks, parseWantsList, pageCount, isLoggedOut, wantsFilterParam, isWantsFilterApplied } from './parse.js';
+import { parseOffers, parseVersionLinks, parseWantsList, pageCount, isLoggedOut, wantsFilterParam, isWantsFilterApplied, isTruncated } from './parse.js';
 
 export const toEnglish = (href) => {
   const path = String(href || '').replace(/^https?:\/\/[^/]+/, '');
@@ -79,7 +79,9 @@ async function offersAt(fetcher, url) {
   const hit = fetcher.cached(url);
   if (hit) return hit;
   const doc = await fetcher.doc(url);
-  const v = doc ? { offers: parseOffers(doc, url), versions: /\/Cards\//.test(url) ? parseVersionLinks(doc, url) : [] } : { offers: [], versions: [] };
+  const v = doc
+    ? { offers: parseOffers(doc, url), versions: /\/Cards\//.test(url) ? parseVersionLinks(doc, url) : [], truncated: isTruncated(doc) }
+    : { offers: [], versions: [], truncated: false };
   fetcher.store(url, v);
   return v;
 }
@@ -95,6 +97,7 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     let found = [];
     const page = await offersAt(fetcher, `${path}?${qs}`);
     found.push(...page.offers);
+    let truncated = !!page.truncated;
     // An any-printing want whose card page lists printings but no offers:
     // visit the cheapest printings one by one.
     if (want.kind === 'card' && !page.offers.length && page.versions.length) {
@@ -105,11 +108,13 @@ export async function collectOffers(fetcher, wants, settings, progress) {
       for (const v of versions) {
         const r = await offersAt(fetcher, `${toEnglish(v.url)}?${qs}`);
         found.push(...r.offers.map((o) => ({ ...o, expansion: o.expansion || v.expansion })));
+        truncated ||= !!r.truncated;
       }
     }
     const seen = new Set();
     found = found.filter((o) => !seen.has(o.id) && seen.add(o.id) && offerAllowed(o, want, f, settings));
     want.offers = found;
+    want.truncated = truncated;
     want.filters = f;
     want.key = want.idWant;
   }
@@ -136,13 +141,24 @@ export function matchWants(offer, wants) {
   return wants.filter((w) => w.kind === 'card' && name && baseName(w.name) === name);
 }
 
+// Should the seller scan run? 'auto' runs it only when some card page held
+// back offers; when every page showed everything, the card scan is already
+// the complete picture and the scan would add nothing.
+export function shouldScanSellers(wants, mode) {
+  if (mode === 'off') return { run: false, reason: 'off' };
+  const cut = wants.filter((w) => w.truncated).length;
+  if (mode === 'always') return { run: true, reason: 'always', cut };
+  return cut ? { run: true, reason: 'truncated', cut } : { run: false, reason: 'complete', cut };
+}
+
 // Sellers worth a full look: those offering the most different wanted cards
-// so far, plus everyone already in the cart.
+// so far (cards whose page was cut off count double, since that is where
+// sellers can be hidden), plus everyone already in the cart.
 export function pickSellersToScan(wants, chosen, limit) {
   const count = new Map();
   const info = new Map();
   for (const w of wants) {
-    for (const s of new Set((w.offers || []).map((o) => o.seller))) count.set(s, (count.get(s) || 0) + 1);
+    for (const s of new Set((w.offers || []).map((o) => o.seller))) count.set(s, (count.get(s) || 0) + (w.truncated ? 2 : 1));
     for (const o of w.offers || []) if (!info.has(o.seller)) info.set(o.seller, o);
   }
   const ranked = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s);
@@ -159,8 +175,13 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
   const candidates = [param, 'idWantsList', 'idWantslist', 'wantsList'].filter(Boolean);
   param = null;
   for (const c of candidates) {
-    const d = await fetcher.doc(`${userUrl(sellers[0])}?${c}=${listId}`);
-    if (d && isWantsFilterApplied(d, c, listId)) { param = c; break; }
+    const url = `${userUrl(sellers[0])}?${c}=${listId}`;
+    const d = await fetcher.doc(url);
+    if (d && isWantsFilterApplied(d, c, listId)) {
+      param = c;
+      fetcher.store(url, { offers: parseOffers(d, url, sellers[0]), pages: pageCount(d) }); // reused by the scan below
+      break;
+    }
   }
   if (!param) {
     log?.('Seller scan skipped: could not find the wants-list filter on seller pages.');

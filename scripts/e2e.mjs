@@ -3,12 +3,14 @@
 // sellers from other countries), the built bookmarklet is run on a wants
 // page, and the result and the add-to-cart replay are checked.
 //
-// Two runs. Without the seller scan, bigstore_ch only shows up on the
-// Counterspell page and the best cart is 75,90 €. With the scan, its own
-// stock (filtered by the wants list, over two pages) turns out to hold
-// Sheoldred and the Bolts too, and one parcel from it costs 73,60 € — the
-// bundle the card pages alone cannot reveal. The second run also uses the
-// exact solver, served from a mocked CDN.
+// Two runs, both with the seller scan on Auto. In the first, every card page
+// shows all its offers, so the scan is skipped and the best cart is 75,90 €
+// (bigstore_ch only shows up on the Counterspell page). In the second, the
+// Counterspell page holds offers back ("Show more results"), so the scan
+// runs: bigstore_ch's own stock (filtered by the wants list, over two pages)
+// also holds Sheoldred and the Bolts, and one parcel from it costs 73,60 € —
+// the bundle the card pages alone did not reveal. The second run also uses
+// the exact solver, served from a mocked CDN.
 //   node scripts/e2e.mjs   (needs Playwright; screenshots go to e2e-out/)
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
@@ -86,7 +88,7 @@ const highsDir = `${process.cwd()}/node_modules/highs/build/`;
 await mkdir('e2e-out', { recursive: true });
 const bm = await readFile('dist/bookmarklet.txt', 'utf8');
 
-async function scenario(name, settings, expectTotal, extraChecks) {
+async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   const ctx = await browser.newContext({ ...pw.devices['Pixel 7'] });
   const page = await ctx.newPage();
   const requested = [];
@@ -97,6 +99,7 @@ async function scenario(name, settings, expectTotal, extraChecks) {
     let html = m ? sellerPage(m[1], u.searchParams) : pages[u.pathname];
     if (!html) return route.fulfill({ status: 404, body: 'not found' });
     if (u.pathname === '/en/Magic/Wants/123') html = html.replace('<body>', `<body>${siteScript}`);
+    if (cutOff.includes(u.pathname)) html = html.replace('</body>', '<button class="btn btn-primary">Show more results</button></body>');
     return route.fulfill({ status: 200, contentType: 'text/html', body: html });
   });
   await page.route('https://cdn.jsdelivr.net/npm/highs@*/build/*', async (route) => {
@@ -131,7 +134,8 @@ async function scenario(name, settings, expectTotal, extraChecks) {
 
 // Hand-computed from the CH tiers: Sheoldred alone from basel_magic (60 + 8,50),
 // 2 Counterspell from lugano (1,80 + 1,60), 4 Bolts from zurich_cards (2,40 + 1,60).
-await scenario('no-scan', { scanSellers: 0 }, '75,90 €', async ({ page, fail }) => {
+await scenario('complete-pages', { scanMode: 'auto' }, '75,90 €', async ({ page, text, requested, fail }) => {
+  if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran although every card page was complete');
   await page.click('#cmopt-root >> text=Add all to cart');
   await page.waitForFunction(() => window.__cartPosts.length >= 3, null, { timeout: 15000 }).catch(() => {});
   const posts = await page.evaluate(() => window.__cartPosts);
@@ -140,10 +144,10 @@ await scenario('no-scan', { scanSellers: 0 }, '75,90 €', async ({ page, fail }
 });
 
 // Everything from bigstore_ch in one tracked parcel: 60,50 + 2,00 + 2,60 + 8,50.
-await scenario('scan+exact', { scanSellers: 10, exact: true }, '73,60 €', async ({ text, requested, fail }) => {
+await scenario('cut-off+exact', { scanMode: 'auto', exact: true }, '73,60 €', async ({ text, requested, fail }) => {
   if (!requested.some((r) => r.includes('/Users/bigstore_ch/Offers/Singles?idWantsList=123&site=2'))) fail('second page of the seller scan not read');
   if (!requested.includes('CDN highs.wasm')) fail('exact solver not loaded');
   if (!/Checked with the exact solver/.test(text)) fail('exact solver result not used');
   if (!/Cheapest: 0,60 € at zurich_cards/.test(text)) fail('bundling explanation missing');
-});
+}, [`${P}/Ice-Age/Counterspell`]);
 await browser.close();
