@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cardmarket Optimizer</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#5d6670; --line:#e3e6ea; --card:#f6f7f9; --accent:#0a6cff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16191d; --fg:#e8eaed; --muted:#9aa3ad; --line:#2c3238; --card:#1f2328; --accent:#5b9dff; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  p, li { color: var(--fg); } .muted { color: var(--muted); font-size: 14px; }
+  ol { padding-left: 22px; } li { margin: 6px 0; }
+  .btn { display:inline-block; border:0; border-radius:10px; padding:12px 18px; font:inherit; font-weight:600; background:var(--accent); color:#fff; text-decoration:none; cursor:pointer; }
+  .btn.sec { background: var(--card); color: var(--fg); border:1px solid var(--line); }
+  textarea { width:100%; box-sizing:border-box; height:90px; font: 12px ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  code { background: var(--card); padding: 1px 5px; border-radius: 4px; }
+  .card { background: var(--card); border:1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cardmarket Optimizer</h1>
+  <p class="muted">v{{VERSION}} · runs entirely in your browser on cardmarket.com · no account, no server</p>
+  <p>Reads one of your wants lists, fetches the offers for every card (only from the seller countries you allow), and works out the cheapest
+     combination of sellers <b>including shipping</b>. Then it can put the result in your cart.</p>
+
+  <h2>Install on Android (Chrome)</h2>
+  <ol>
+    <li><button class="btn" id="copy">Copy bookmarklet</button> <span id="copied" class="muted"></span></li>
+    <li>In Chrome, bookmark any page (⋮ → ☆), then open <b>Bookmarks</b>, long-press the new bookmark → <b>Edit</b>.</li>
+    <li>Name it <code>cmopt</code>, and replace the URL with what you copied ({{SIZE}}). Save.</li>
+    <li>Open <a href="https://www.cardmarket.com/en/Magic/Wants">cardmarket.com → Wants</a> and log in.</li>
+    <li>Tap the address bar, type <code>cmopt</code>, and tap the bookmark suggestion (with the ☆). The optimizer opens over the page.</li>
+  </ol>
+  <p class="muted">Chrome only runs bookmarklets started from the address bar like this, not from the bookmarks screen.
+     Tip: if you use Chrome sync, add the bookmarklet once on desktop and it shows up on your phone.</p>
+
+  <h2>Desktop</h2>
+  <p>Drag this to your bookmarks bar: <a class="btn sec" id="drag" href="{{BOOKMARKLET}}">⚡ cmopt</a></p>
+
+  <h2>Firefox for Android / Tampermonkey</h2>
+  <p>Install a userscript manager (Tampermonkey or Violentmonkey), then install
+     <a href="cm-optimizer.user.js">cm-optimizer.user.js</a>. A <b>⚡ Optimize</b> button appears on every Cardmarket page.</p>
+
+  <h2>Bookmarklet code</h2>
+  <textarea id="code" readonly>{{BOOKMARKLET}}</textarea>
+
+  <h2>Good to know</h2>
+  <div class="card">
+    <ul>
+      <li>It fetches about one page per card (more for "any printing" wants), with a pause between pages to avoid rate limits. A 100-card list takes a few minutes. Fetched pages are cached for 30 minutes, so you can change optimizer settings and run again fast.</li>
+      <li>Shipping is an <b>estimate</b> from editable tiers (Setup → Optimizer → Shipping estimates). Your cart shows Cardmarket's real shipping before you pay.</li>
+      <li>If Cardmarket shows a browser check, pass it on any page, then run again. Pages it already fetched are kept.</li>
+    </ul>
+  </div>
+</main>
+<script>
+  const code = document.getElementById('code');
+  document.getElementById('copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(code.value); }
+    catch { code.focus(); code.select(); document.execCommand('copy'); }
+    document.getElementById('copied').textContent = 'Copied ✓';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+// Shipping estimate for one parcel from one seller.
+// tiers: [{ maxCards, maxValue, price }]; the cheapest that fits is used, and
+// the most expensive tier is the fallback when none fits.
+export function tierCost(tiers, cards, value) {
+  if (cards <= 0) return 0;
+  let best = Infinity;
+  let fallback = 0;
+  for (const t of tiers) {
+    fallback = Math.max(fallback, t.price);
+    if (cards <= t.maxCards && value <= t.maxValue + 1e-9 && t.price < best) best = t.price;
+  }
+  return best === Infinity ? fallback : best;
+}
+
+export function tiersFor(shipping, countryCode) {
+  return (shipping && (shipping[countryCode] || shipping.default)) || [];
+}
+
+// "maxCards maxValue price" per line, e.g. "17 25 2.10".
+export function parseTiers(text) {
+  return String(text || '').split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [maxCards, maxValue, price] = l.split(/[\s;]+/).map((x) => Number(String(x).replace(',', '.')));
+    return { maxCards, maxValue, price };
+  }).filter((t) => [t.maxCards, t.maxValue, t.price].every(Number.isFinite));
+}
+
+export const formatTiers = (tiers) => tiers.map((t) => `${t.maxCards} ${t.maxValue} ${t.price}`).join('\n');

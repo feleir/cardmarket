@@ -1,0 +1,17 @@
+{
+  "name": "cardmarket-optimizer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wants-list cart optimizer for Cardmarket that runs as a bookmarklet (works on Chrome for Android) or userscript.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.js",
+    "e2e": "node scripts/build.mjs && node scripts/e2e.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "linkedom": "^0.18.5"
+  }
+}
