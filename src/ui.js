@@ -1,14 +1,14 @@
 // The overlay panel: settings, progress and results. Rendered into a shadow
 // root so Cardmarket's styles and ours cannot interfere. Built for a phone
 // screen first; on desktop it is a side panel.
-import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING } from './constants.js';
+import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS } from './constants.js';
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
 import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers } from './collect.js';
 import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
-import { addToCart, addAll } from './cart.js';
+import { addAll, cartLog } from './cart.js';
 
 const KEY = 'cmopt:settings';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,7 +19,10 @@ const langName = (id) => LANGUAGES.find((l) => l.id === id)?.name || '';
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (s) return { ...DEFAULT_SETTINGS, ...s, shipping: { ...DEFAULT_SHIPPING, ...(s.shipping || {}) } };
+    if (s) {
+      if (OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions)) s.excludeExpansions = DEFAULT_EXCLUDED_EXPANSIONS;
+      return { ...DEFAULT_SETTINGS, ...s, shipping: { ...DEFAULT_SHIPPING, ...(s.shipping || {}) } };
+    }
   } catch { /* fall through */ }
   return structuredClone(DEFAULT_SETTINGS);
 }
@@ -96,6 +99,9 @@ export function mount() {
     log: [],
     countryFilter: '',
     fetcher: null,
+    cartState: new Map(),
+    cartMsg: null,
+    adding: false,
   };
 
   const here = location.pathname.match(/\/Wants\/(\d+)/);
@@ -227,12 +233,21 @@ export function mount() {
         <textarea id="cmopt-debug" readonly hidden></textarea></section>` : ''}`;
   }
 
+  function cartButton(it, gi, ii) {
+    const state = st.cartState.get(it.offer.id);
+    if (state === 'added') return '<span class="ok">In cart ✓</span>';
+    if (state === 'failed') return `<a class="warn" href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">Not added · open</a>`;
+    return `<button class="btn sm sec" data-add="${gi}:${ii}">Add</button>`;
+  }
+
   function viewResults() {
     const r = st.result;
     if (!r) return '<p class="muted">Run the optimizer first.</p>';
     const saved = r.baseline.total - r.total;
     const missing = r.missing.reduce((n, m) => n + m.count, 0);
     return `
+    ${st.cartMsg ? `<div class="card"><p class="${st.cartMsg.ok ? 'ok' : 'warn'}">${esc(st.cartMsg.text)}</p>
+      <p><a href="/en/${esc(game())}/ShoppingCart">Open the Cardmarket cart</a> to check items and the real shipping.</p></div>` : ''}
     <div class="card">
       <div class="sum">
         <span>Total (estimated)</span><b class="big">${money(r.total)}</b>
@@ -258,10 +273,11 @@ export function mount() {
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
             <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
             ${it.cheapest ? `<div class="muted">Cheapest: ${money(it.cheapest.price)} at ${esc(it.cheapest.seller)} — bundled here, cheaper with shipping</div>` : ''}</div>
-          <div class="p">${money(it.offer.price)}<br><button class="btn sm sec" data-add="${gi}:${ii}">Add</button></div>
+          <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
         <p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>
       </div>`).join('')}
+    ${st.cartMsg && !st.cartMsg.ok ? '<p><button class="btn sec sm" data-act="debug">Copy debug report</button></p><textarea id="cmopt-debug" readonly hidden></textarea>' : ''}
     ${r.missing.length ? `<div class="card"><b>Not found</b>${r.missing.map((m) => `<div class="item"><div class="t">${m.count}× <a href="${esc(m.want.url)}" target="_blank" rel="noopener">${esc(m.want.name)}</a></div></div>`).join('')}</div>` : ''}
     <p class="muted">Shipping is an estimate from your tiers; the cart shows Cardmarket's real figure. Prices can change between fetching and buying.</p>`;
   }
@@ -360,6 +376,7 @@ export function mount() {
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
       log: st.log.slice(-40),
+      cart: cartLog.slice(-12),
     }, null, 1);
   }
 
@@ -409,16 +426,28 @@ export function mount() {
     return lines.join('\n');
   }
 
+  // Sends the items, then checks the cart; the result per article is kept
+  // so the Results tab can mark what is in the cart and what is not.
   async function addItems(items, btn) {
+    if (st.adding) return;
+    st.adding = true;
+    let sent = 0;
+    const label = (txt) => { if (btn && btn.isConnected) btn.textContent = txt; };
     if (btn) btn.disabled = true;
-    const results = await addAll(items, (it, res) => {
-      if (res === 'failed') window.open(it.offer.productUrl, '_blank');
-    });
-    if (btn) {
-      btn.disabled = false;
-      const n = results.filter((x) => x === 'added').length;
-      btn.textContent = results.includes('dialog') ? 'Confirm in dialog, then tap again' : `Added ${n}/${items.length}`;
+    try {
+      const { added, failed } = await addAll(items, (it, state) => {
+        if (state === 'sent') label(`Sending ${++sent}/${items.length}…`);
+        else st.cartState.set(it.offer.id, state);
+        if (sent === items.length) label('Checking the cart…');
+      });
+      st.cartMsg = failed.length
+        ? { ok: false, text: `${added.length} of ${items.length} added to your cart. ${failed.length} could not be added; they are marked below with a link to the card.` }
+        : { ok: true, text: `All ${added.length} added to your cart.` };
+    } catch (e) {
+      st.cartMsg = { ok: false, text: 'Adding to the cart failed: ' + (e.message || e) };
     }
+    st.adding = false;
+    render();
   }
 
   shadow.addEventListener('click', async (e) => {
@@ -443,12 +472,7 @@ export function mount() {
     }
     if (t.dataset.add) {
       const [gi, ii] = t.dataset.add.split(':').map(Number);
-      const it = st.result.groups[gi].items[ii];
-      t.disabled = true;
-      const res = await addToCart(it.offer, it.quantity);
-      t.textContent = res === 'added' ? 'Added ✓' : res === 'dialog' ? 'Confirm…' : 'Open';
-      if (res === 'failed') window.open(it.offer.productUrl, '_blank');
-      if (res !== 'added') t.disabled = false;
+      await addItems([st.result.groups[gi].items[ii]], t);
       return;
     }
     if (t.dataset.addseller) { await addItems(st.result.groups[Number(t.dataset.addseller)].items, t); return; }

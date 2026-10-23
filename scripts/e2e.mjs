@@ -71,17 +71,32 @@ function sellerPage(seller, q) {
   return userOffersPage({ seller, listOptions, selected: list, pages: 2, rows: bigRows[q.get('site') || '1'] || [] });
 }
 
-// Stand-in for Cardmarket's delegated data-ajax-action submit handler.
-const siteScript = `<script>
-  window.__cartPosts = [];
-  document.addEventListener('submit', (e) => {
-    const f = e.target.closest('form[data-ajax-action]');
-    if (!f) return;
-    e.preventDefault();
-    window.__cartPosts.push(Object.fromEntries(new FormData(f)));
-    const b = document.querySelector('.shopping-cart .badge'); b.textContent = String(Number(b.textContent) + 1);
-  });
-</script><a href="/en/Magic/ShoppingCart" class="shopping-cart"><span class="badge">0</span></a>`;
+// Stand-in for Cardmarket's cart. The row form posts to
+// PostGetAction/<action>; article 32 is deliberately not accepted there, so
+// the fallback (the "put in cart" dialog's own form) is exercised too.
+const cart = new Map();
+const fieldsOf = (body) => Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
+function cartRoute(u, req) {
+  if (req.method() === 'POST' && u.pathname.startsWith('/en/Magic/PostGetAction/ShoppingCart_Add')) {
+    const f = fieldsOf(req.postData() || '');
+    if (f.__cmtkn !== 'tok123') return '<p>bad token</p>';
+    const via = u.pathname.endsWith('FromModal') ? 'dialog' : 'direct';
+    for (const [k, v] of Object.entries(f)) {
+      const m = k.match(/^idArticle\[(\d+)\]$/) || (k === 'idArticle' && [null, v]);
+      if (!m) continue;
+      const id = m[1];
+      if (id === '32' && via === 'direct') continue;
+      cart.set(id, Number(f[`amount[${id}]`] ?? f.amount));
+    }
+    return '<p>ok</p>';
+  }
+  if (u.pathname === '/en/Magic/ShoppingCart') return `<html><body>${[...cart].map(([id, n]) => `<div id="articleRow${id}">${n}</div>`).join('')}</body></html>`;
+  if (u.pathname === '/en/Magic/Modal/Article_PutSingleInShoppingCart') {
+    const id = u.searchParams.get('idArticle');
+    return `<div class="modal-body"><form method="POST" action="/en/Magic/PostGetAction/ShoppingCart_Add_AddArticlesFromModal"><input type="hidden" name="__cmtkn" value="tok123"><input type="hidden" name="idArticle" value="${id}"><select name="amount"><option value="1" selected>1</option><option value="2">2</option></select><button type="submit">Put in cart</button></form></div>`;
+  }
+  return null;
+}
 
 const browser = await pw.chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium' }).catch(() => pw.chromium.launch());
 const highsDir = `${process.cwd()}/node_modules/highs/build/`;
@@ -96,9 +111,8 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
     const u = new URL(route.request().url());
     requested.push(u.pathname + u.search);
     const m = u.pathname.match(/^\/en\/Magic\/Users\/([^/]+)\/Offers\/Singles$/);
-    let html = m ? sellerPage(m[1], u.searchParams) : pages[u.pathname];
+    let html = cartRoute(u, route.request()) ?? (m ? sellerPage(m[1], u.searchParams) : pages[u.pathname]);
     if (!html) return route.fulfill({ status: 404, body: 'not found' });
-    if (u.pathname === '/en/Magic/Wants/123') html = html.replace('<body>', `<body>${siteScript}`);
     if (cutOff.includes(u.pathname)) html = html.replace('</body>', '<button class="btn btn-primary">Show more results</button></body>');
     return route.fulfill({ status: 200, contentType: 'text/html', body: html });
   });
@@ -139,10 +153,13 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
 await scenario('complete-pages', { scanMode: 'auto' }, '75,90 €', async ({ page, text, requested, fail }) => {
   if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran although every card page was complete');
   await page.click('#cmopt-root >> text=Add all to cart');
-  await page.waitForFunction(() => window.__cartPosts.length >= 3, null, { timeout: 15000 }).catch(() => {});
-  const posts = await page.evaluate(() => window.__cartPosts);
-  const got = posts.map((p) => Object.entries(p).filter(([k]) => k.startsWith('amount')).map(([k, v]) => `${k}=${v}`).join()).sort().join(' ');
-  if (got !== 'amount[10]=4 amount[20]=1 amount[32]=2') fail(`cart posts: ${got}`);
+  await page.waitForSelector('#cmopt-root >> text=added to your cart', { timeout: 30000 }).catch(() => {});
+  const got = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
+  if (got !== '10x4 20x1 32x2') fail(`cart holds: ${got}`);
+  const after = await page.locator('#cmopt-root main').innerText();
+  if (!/All 3 added to your cart/.test(after)) fail('cart result not reported');
+  if ((after.match(/In cart ✓/g) || []).length !== 3) fail('items not marked as in the cart');
+  await page.screenshot({ path: 'e2e-out/complete-pages-3-cart.png' });
 });
 
 // Everything from bigstore_ch in one tracked parcel: 60,50 + 2,00 + 2,60 + 8,50.

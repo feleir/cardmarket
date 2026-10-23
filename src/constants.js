@@ -75,6 +75,13 @@ export const DEFAULT_SHIPPING = {
   ],
 };
 
+// Printings that are not tournament-legal. Cardmarket names the World
+// Championship decks "WCD <year>: <player>" (and the 1996 set "Pro Tour
+// Collector Set"), so match those names, not only the long form.
+export const DEFAULT_EXCLUDED_EXPANSIONS = "World Championship Decks\nWCD\nPro Tour Collector Set\nCollectors' Edition\nInternational Edition\nOversized\nArt Series";
+// Defaults earlier versions saved into settings; replaced on load.
+export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' Edition\nInternational Edition\nOversized\nArt Series"];
+
 export const DEFAULT_SETTINGS = {
   sellerCountries: [4],
   languages: [],          // empty = use what each want says
@@ -84,7 +91,7 @@ export const DEFAULT_SETTINGS = {
   allowUnrated: true,
   sellerTypes: [],        // [] = all; 0 private, 1 professional, 2 powerseller
   excludeSellers: '',
-  excludeExpansions: "World Championship Decks\nCollectors' Edition\nInternational Edition\nOversized\nArt Series",
+  excludeExpansions: DEFAULT_EXCLUDED_EXPANSIONS,
   maxVersions: 12,
   maxSellers: 0,          // 0 = unlimited
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels

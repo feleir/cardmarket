@@ -167,3 +167,12 @@ test('live wants row', () => {
     { name: 'Acidic Sliver', kind: 'product', q: 3, langs: [], cond: 5, exp: 'Stronghold', max: 0, flags: {} },
   );
 });
+
+test('World Championship Deck printings are excluded for any-printing wants by default', () => {
+  const want = { kind: 'card', languages: [], minCondition: 0, flags: {} };
+  const f = wantFilters(want, DEFAULT_SETTINGS);
+  const o = { seller: 'a', countryId: 4, price: 1, rating: 5 };
+  assert.equal(offerAllowed({ ...o, expansion: 'WCD 1999: Matt Linde' }, want, f, DEFAULT_SETTINGS), false);
+  assert.equal(offerAllowed({ ...o, expansion: 'Pro Tour Collector Set' }, want, f, DEFAULT_SETTINGS), false);
+  assert.equal(offerAllowed({ ...o, expansion: 'Mystery Booster 2' }, want, f, DEFAULT_SETTINGS), true);
+});
