@@ -209,6 +209,7 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
       condition, language, isFoil, isSigned, isAltered,
       expansion, productUrl, name,
       price, available, comment, cartForm, cartModal,
+      pageUrl: pageUrl.replace(/^https?:\/\/[^/]+/, ''), // where the row (and its cart button) is
     });
   }
   return offers;

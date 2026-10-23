@@ -4,7 +4,7 @@
 // page, and the result and the add-to-cart replay are checked.
 //
 // Two runs, both with the seller scan on Auto. In the first, every card page
-// shows all its offers, so the scan is skipped and the best cart is 75,90 €
+// shows all its offers, so the scan is skipped and the best cart is 76,33 €
 // (bigstore_ch only shows up on the Counterspell page). In the second, the
 // Counterspell page holds offers back ("Show more results"), so the scan
 // runs: bigstore_ch's own stock (filtered by the wants list, over two pages)
@@ -71,30 +71,31 @@ function sellerPage(seller, q) {
   return userOffersPage({ seller, listOptions, selected: list, pages: 2, rows: bigRows[q.get('site') || '1'] || [] });
 }
 
-// Stand-in for Cardmarket's cart. The row form posts to
-// PostGetAction/<action>; article 32 is deliberately not accepted there, so
-// the fallback (the "put in cart" dialog's own form) is exercised too.
+// Stand-in for Cardmarket's cart. Like the real site, a product page's own
+// script sends the add-to-cart request when its button is pressed (here to
+// a mock AJAX endpoint); posting the form anywhere else does nothing.
 const cart = new Map();
 const fieldsOf = (body) => Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
+const pageScript = `<script>
+  document.addEventListener('submit', (e) => {
+    const f = e.target.closest('form[data-ajax-action]');
+    if (!f) return;
+    e.preventDefault();
+    fetch('/en/Magic/AjaxAction/' + f.dataset.ajaxAction, { method: 'POST', body: new FormData(f), credentials: 'include' });
+  });
+</script>`;
 function cartRoute(u, req) {
-  if (req.method() === 'POST' && u.pathname.startsWith('/en/Magic/PostGetAction/ShoppingCart_Add')) {
+  if (req.method() === 'POST' && u.pathname.startsWith('/en/Magic/AjaxAction/ShoppingCart_Add')) {
     const f = fieldsOf(req.postData() || '');
-    if (f.__cmtkn !== 'tok123') return '<p>bad token</p>';
-    const via = u.pathname.endsWith('FromModal') ? 'dialog' : 'direct';
-    for (const [k, v] of Object.entries(f)) {
-      const m = k.match(/^idArticle\[(\d+)\]$/) || (k === 'idArticle' && [null, v]);
-      if (!m) continue;
-      const id = m[1];
-      if (id === '32' && via === 'direct') continue;
-      cart.set(id, Number(f[`amount[${id}]`] ?? f.amount));
+    if (f.__cmtkn !== 'tok123') return '{"error":"token"}';
+    for (const k of Object.keys(f)) {
+      const m = k.match(/^idArticle\[(\d+)\]$/);
+      if (m) cart.set(m[1], Number(f[`amount[${m[1]}]`]));
     }
-    return '<p>ok</p>';
+    return '{"ok":true}';
   }
+  if (req.method() === 'POST') return '<html><body>home</body></html>'; // what PostGetAction did live
   if (u.pathname === '/en/Magic/ShoppingCart') return `<html><body>${[...cart].map(([id, n]) => `<div id="articleRow${id}">${n}</div>`).join('')}</body></html>`;
-  if (u.pathname === '/en/Magic/Modal/Article_PutSingleInShoppingCart') {
-    const id = u.searchParams.get('idArticle');
-    return `<div class="modal-body"><form method="POST" action="/en/Magic/PostGetAction/ShoppingCart_Add_AddArticlesFromModal"><input type="hidden" name="__cmtkn" value="tok123"><input type="hidden" name="idArticle" value="${id}"><select name="amount"><option value="1" selected>1</option><option value="2">2</option></select><button type="submit">Put in cart</button></form></div>`;
-  }
   return null;
 }
 
@@ -113,6 +114,7 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
     const m = u.pathname.match(/^\/en\/Magic\/Users\/([^/]+)\/Offers\/Singles$/);
     let html = cartRoute(u, route.request()) ?? (m ? sellerPage(m[1], u.searchParams) : pages[u.pathname]);
     if (!html) return route.fulfill({ status: 404, body: 'not found' });
+    if (html.includes('article-row')) html = html.replace('</body>', `${pageScript}</body>`);
     if (cutOff.includes(u.pathname)) html = html.replace('</body>', '<button class="btn btn-primary">Show more results</button></body>');
     return route.fulfill({ status: 200, contentType: 'text/html', body: html });
   });
@@ -148,14 +150,16 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   await ctx.close();
 }
 
-// Hand-computed from the CH tiers: Sheoldred alone from basel_magic (60 + 8,50),
-// 2 Counterspell from lugano (1,80 + 1,60), 4 Bolts from zurich_cards (2,40 + 1,60).
-await scenario('complete-pages', { scanMode: 'auto' }, '75,90 €', async ({ page, text, requested, fail }) => {
+// Hand-computed from the CH tiers (letter 1,83 €, tracked above 25 € 8,50 €):
+// Sheoldred + 2 Counterspell from geneva_tcg (63,60 + 8,50 = 72,10) and the
+// 4 Bolts from zurich_cards (2,40 + 1,83) = 76,33 €. Splitting Sheoldred to
+// basel_magic and Counterspell to lugano costs 68,50 + 3,63 + 4,23 = 76,36 €.
+await scenario('complete-pages', { scanMode: 'auto' }, '76,33 €', async ({ page, text, requested, fail }) => {
   if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran although every card page was complete');
   await page.click('#cmopt-root >> text=Add all to cart');
   await page.waitForSelector('#cmopt-root >> text=added to your cart', { timeout: 30000 }).catch(() => {});
   const got = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
-  if (got !== '10x4 20x1 32x2') fail(`cart holds: ${got}`);
+  if (got !== '10x4 21x1 31x2') fail(`cart holds: ${got}`);
   const after = await page.locator('#cmopt-root main').innerText();
   if (!/All 3 added to your cart/.test(after)) fail('cart result not reported');
   if ((after.match(/In cart ✓/g) || []).length !== 3) fail('items not marked as in the cart');
@@ -166,7 +170,7 @@ await scenario('complete-pages', { scanMode: 'auto' }, '75,90 €', async ({ pag
 await scenario('cut-off+exact', { scanMode: 'auto', exact: true }, '73,60 €', async ({ text, requested, fail }) => {
   if (!requested.some((r) => r.includes('/Users/bigstore_ch/Offers/Singles?idWantsList=123&site=2'))) fail('second page of the seller scan not read');
   if (!requested.includes('CDN highs.wasm')) fail('exact solver not loaded');
-  if (!/Checked with the exact solver/.test(text)) fail('exact solver result not used');
+  if (!/Proven optimal by the exact solver/.test(text)) fail('exact solver result not used');
   if (!/Cheapest: 0,60 € at zurich_cards/.test(text)) fail('bundling explanation missing');
 }, [`${P}/Ice-Age/Counterspell`]);
 await browser.close();

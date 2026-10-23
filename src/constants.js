@@ -66,8 +66,10 @@ export const DEFAULT_SHIPPING = {
     { maxCards: 40, maxValue: 250, price: 6.5 },
     { maxCards: 100000, maxValue: 100000, price: 12 },
   ],
+  // Cheapest letter as Cardmarket shows it within Switzerland (user-confirmed);
+  // the larger tiers are still estimates.
   CH: [
-    { maxCards: 4, maxValue: 25, price: 1.6 },
+    { maxCards: 4, maxValue: 25, price: 1.83 },
     { maxCards: 17, maxValue: 25, price: 2.6 },
     { maxCards: 40, maxValue: 25, price: 3.6 },
     { maxCards: 40, maxValue: 250, price: 8.5 },
@@ -81,6 +83,9 @@ export const DEFAULT_SHIPPING = {
 export const DEFAULT_EXCLUDED_EXPANSIONS = "World Championship Decks\nWCD\nPro Tour Collector Set\nCollectors' Edition\nInternational Edition\nOversized\nArt Series";
 // Defaults earlier versions saved into settings; replaced on load.
 export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' Edition\nInternational Edition\nOversized\nArt Series"];
+
+// Swiss tiers earlier versions saved into settings; replaced on load.
+export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
   sellerCountries: [4],

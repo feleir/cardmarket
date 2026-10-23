@@ -78,6 +78,11 @@ export async function loadWantsList(fetcher, listUrl, log) {
   return wants.filter((w) => (seen.has(w.idWant) ? false : seen.add(w.idWant)));
 }
 
+const unreadRow = (r) => (r ? {
+  unread: r.outerHTML.replace(/\s+/g, ' ').slice(0, 1500),
+  unreadOffer: (r.querySelector('.col-offer')?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 1500),
+} : {});
+
 // What a fetched page looked like, kept small: enough to tell "the page had
 // no offers" from "the page had offers we could not read".
 function pageDiag(doc, url, offers) {
@@ -92,7 +97,7 @@ function pageDiag(doc, url, offers) {
     parsed: offers.length,
     sample: (sample?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 2500),
     // A row that was on the page but could not be read, if any.
-    unread: ([...rows].find((r) => !offers.some((o) => r.id.endsWith(o.id)))?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 3000) || undefined,
+    ...unreadRow([...rows].find((r) => !offers.some((o) => r.id.endsWith(o.id)))),
   };
 }
 
@@ -219,7 +224,7 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
   }
   if (!param) {
     log?.('Seller scan skipped: could not find the wants-list filter on seller pages.');
-    return { added: 0, param: null };
+    return { added: 0, param: null, diag: firstDoc && sellerPageDiag(firstDoc, userUrl(sellers[0]), listId) };
   }
   let added = 0;
   for (const seller of sellers) {
@@ -256,4 +261,22 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
     log?.(`${seller.seller}: ${n ? `+${n} offer(s) for ${cards.size} card(s)` : 'nothing new'}`);
   }
   return { added, param };
+}
+
+// What a seller's offers page offers as filters, for the debug report when
+// the wants-list filter cannot be found.
+function sellerPageDiag(doc, url, listId) {
+  const flat = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+  return {
+    url,
+    title: flat(doc.title).slice(0, 120),
+    selects: [...doc.querySelectorAll('select[name]')].map((el) => ({
+      name: el.getAttribute('name'),
+      options: [...el.querySelectorAll('option')].slice(0, 8).map((o) => `${o.getAttribute('value')}=${flat(o.textContent).slice(0, 30)}`),
+    })).slice(0, 25),
+    inputs: [...doc.querySelectorAll('form input[name]')].map((el) => `${el.getAttribute('name')}:${el.getAttribute('type') || ''}`).slice(0, 40),
+    forms: [...doc.querySelectorAll('form')].map((f) => flat(`${f.id} ${f.getAttribute('action') || ''} ${f.getAttribute('data-ajax-action') || ''}`)).slice(0, 10),
+    wantsLinks: [...doc.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')).filter((h) => /want/i.test(h) || h.includes(String(listId))).slice(0, 15),
+    mentionsList: doc.body?.innerHTML.includes(String(listId)) || false,
+  };
 }

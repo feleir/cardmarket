@@ -1,14 +1,14 @@
 // The overlay panel: settings, progress and results. Rendered into a shadow
 // root so Cardmarket's styles and ours cannot interfere. Built for a phone
 // screen first; on desktop it is a side panel.
-import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS } from './constants.js';
+import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS } from './constants.js';
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
 import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers } from './collect.js';
 import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
-import { addAll, cartLog } from './cart.js';
+import { addAll, cartLog, siteCartCode } from './cart.js';
 
 const KEY = 'cmopt:settings';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -21,6 +21,8 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (s) {
       if (OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions)) s.excludeExpansions = DEFAULT_EXCLUDED_EXPANSIONS;
+      const ch = s.shipping?.CH?.map((t) => t.price).join();
+      if (ch && OLD_CH_TIERS.some((old) => old.join() === ch)) s.shipping.CH = DEFAULT_SHIPPING.CH;
       return { ...DEFAULT_SETTINGS, ...s, shipping: { ...DEFAULT_SHIPPING, ...(s.shipping || {}) } };
     }
   } catch { /* fall through */ }
@@ -258,7 +260,8 @@ export function mount() {
       </div>
       ${saved > 0.005 ? `<p class="ok">Saves about ${money(saved)} vs. picking the cheapest copy of each card${r.itemsCost > r.baseline.itemsCost + 0.005
         ? `: pays ${money(r.itemsCost - r.baseline.itemsCost)} more for cards to save ${money(r.baseline.shippingCost - r.shippingCost)} on shipping (${r.baseline.sellers - r.groups.length} fewer parcels)` : ''}.</p>` : ''}
-      ${r.exact ? '<p class="muted">Checked with the exact solver.</p>' : ''}
+      ${r.exact === 'Optimal' ? '<p class="ok">Proven optimal by the exact solver: no cheaper cart exists for these offers and shipping tiers.</p>'
+        : r.exact ? '<p class="muted">Checked with the exact solver (stopped at its time limit; may not be the very best).</p>' : ''}
       ${missing ? `<p class="warn">${missing} card(s) could not be found with your filters (see bottom).</p>` : ''}
       <p class="muted">${r.stats.offersConsidered} offers from ${r.stats.sellersConsidered} sellers · ${r.stats.restarts} searches in ${r.stats.ms} ms</p>
     </div>
@@ -332,7 +335,8 @@ export function mount() {
         const listId = (st.listUrl.match(/\/Wants\/(\d+)/) || [])[1];
         setProgress(0.95, `Scanning ${picks.length} sellers' stock for your other cards…`);
         log(`Scanning the stock of ${picks.length} sellers for more of your cards…`);
-        const { added } = await scanSellers(fetcher, wants, listId, picks, s, log);
+        const { added, diag: scanDiag } = await scanSellers(fetcher, wants, listId, picks, s, log);
+        st.scanDiag = scanDiag;
         log(`Seller scan added ${added} offer(s).`);
       }
       log(`Fetched ${fetcher.requests} page(s).`);
@@ -377,6 +381,8 @@ export function mount() {
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
       log: st.log.slice(-40),
       cart: cartLog.slice(-12),
+      siteCart: st.cartMsg && !st.cartMsg.ok ? siteCartCode() : undefined,
+      sellerScan: st.scanDiag,
     }, null, 1);
   }
 
@@ -389,6 +395,7 @@ export function mount() {
     const s = st.settings;
     const wants = (st.wants || []).filter((w) => w.offers);
     const opts = optOptions();
+    let exactStatus = '';
     // The exact model has no seller cap, so it is only used without one.
     if (s.exact && !s.maxSellers) {
       try {
@@ -401,6 +408,7 @@ export function mount() {
         const ex = solveWith(highs, wants, { ...opts, timeLimitMs: s.exactTimeMs });
         if (ex) {
           opts.warmStart = ex.picks;
+          exactStatus = ex.status;
           log(`Exact solver: ${ex.status === 'Optimal' ? 'proven optimal' : 'best found in time limit'} (${Date.now() - t} ms).`);
         }
       } catch (e) {
@@ -408,7 +416,7 @@ export function mount() {
       }
     }
     st.result = optimize(wants, opts);
-    st.result.exact = !!opts.warmStart;
+    st.result.exact = exactStatus;
     st.running = false;
     st.tab = 'results';
     render();

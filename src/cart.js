@@ -1,40 +1,20 @@
 // Putting chosen offers in the Cardmarket cart.
 //
-// Each offer row carries a small add-to-cart form (data-ajax-action =
-// "ShoppingCart_Add_AddArticlesFromProductPage", fields __cmtkn,
-// idArticle[id], amount[id]). Cardmarket's plain form posts go to
-// /<lang>/<game>/PostGetAction/<action>, so the form is posted there
-// directly. Nothing counts as added until the cart page shows the article.
-// For articles still missing, the site's own "put in cart" dialog form
-// (Modal/Article_PutSingleInShoppingCart) is fetched and posted instead.
-// Every attempt is kept in `cartLog` for the debug report.
+// Cardmarket's add-to-cart buttons are handled by its own scripts, which
+// build the request themselves; posting the row's form fields elsewhere is
+// refused (a live test showed PostGetAction redirecting to the home page).
+// So the page each offer came from is opened in a hidden frame (same site,
+// same login), the row's quantity is set, and its own "Put in cart" button
+// is pressed: Cardmarket's code then does exactly what it does for a tap.
+// Nothing counts as added until the cart page shows the article. Every step
+// is kept in `cartLog` for the debug report.
+import { filterQuery } from './collect.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
 
 export const cartLog = [];
 const note = (entry) => { cartLog.push({ at: new Date().toISOString(), ...entry }); if (cartLog.length > 200) cartLog.shift(); };
-
-// The session token is the same across the site's forms; prefer the live
-// page's copy over one cached with the offer.
-const liveToken = () => document.querySelector('input[name="__cmtkn"]')?.value || '';
-
-async function post(url, fields) {
-  const body = new FormData();
-  for (const [n, v] of fields) body.append(n, v);
-  try {
-    const r = await fetch(url, { method: 'POST', body, credentials: 'include' });
-    const text = await r.text().catch(() => '');
-    return { status: r.status, finalUrl: r.url.replace(location.origin, ''), snippet: text.replace(/\s+/g, ' ').slice(0, 300) };
-  } catch (e) {
-    return { status: 0, error: String(e.message || e) };
-  }
-}
-
-function formFields(offer, amount) {
-  const token = liveToken();
-  return offer.cartForm.fields.map(([n, v]) => [n, /^amount\[/.test(n) ? String(amount) : n === '__cmtkn' && token ? token : v]);
-}
 
 // Article ids now in the cart.
 export async function cartArticleIds() {
@@ -43,67 +23,87 @@ export async function cartArticleIds() {
   return new Set(html.match(/\d+/g) || []);
 }
 
-async function addDirect(offer, amount) {
-  if (!offer.cartForm) return { ok: false, why: 'no cart form on the offer (logged out when it was fetched?)' };
-  const url = `/en/${game()}/PostGetAction/${offer.cartForm.action}`;
-  const res = await post(url, formFields(offer, amount));
-  note({ step: 'direct', article: offer.id, amount, url, ...res });
-  return { ok: res.status >= 200 && res.status < 400, res };
+const pageOf = (it) => it.offer.pageUrl
+  || `${it.offer.productUrl}${it.want?.filters ? `?${filterQuery(it.want.filters)}` : ''}`;
+
+function openFrame(url) {
+  return new Promise((resolve) => {
+    const f = document.createElement('iframe');
+    // Desktop width, so the page renders the desktop cart form; off-screen.
+    f.style.cssText = 'position:fixed;left:-20000px;top:0;width:1280px;height:900px;border:0;opacity:0;pointer-events:none';
+    f.setAttribute('aria-hidden', 'true');
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok ? f : (f.remove(), null)); } };
+    f.addEventListener('load', () => setTimeout(() => finish(true), 1500)); // let the site's scripts bind
+    setTimeout(() => finish(false), 25000);
+    f.src = url;
+    document.body.appendChild(f);
+  });
 }
 
-// Fallback: the dialog Cardmarket's mobile layout opens. Post its form.
-async function addViaDialog(offer, amount) {
-  if (!offer.cartModal) return false;
-  const modalUrl = offer.cartModal.replace(/^https?:\/\/[^/]+/, '').replace(/^\/[a-z]{2}\//, '/en/');
-  let doc;
-  try {
-    const r = await fetch(modalUrl, { credentials: 'include' });
-    doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-  } catch (e) {
-    note({ step: 'dialog', article: offer.id, url: modalUrl, error: String(e.message || e) });
-    return false;
+function pressAdd(doc, offer, amount) {
+  const row = doc.getElementById(`articleRow${offer.id}`) || doc.getElementById(`stockRow${offer.id}`);
+  if (!row) return 'row not on the page (sold, or moved to a later page)';
+  const form = row.querySelector('form[data-ajax-action*="ShoppingCart"], form[action*="ShoppingCart"]');
+  if (!form) return 'row has no cart button (logged out, or your own offer)';
+  // Quantity: the hidden amount field, and any visible amount picker in the row.
+  for (const el of row.querySelectorAll('input[name^="amount"], select[name^="amount"], .amount-input, select[name*="mount"]')) {
+    if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === String(amount))) continue;
+    el.value = String(amount);
   }
-  const form = doc.querySelector('form');
-  if (!form) {
-    note({ step: 'dialog', article: offer.id, url: modalUrl, error: 'no form in dialog', snippet: doc.body?.innerHTML.replace(/\s+/g, ' ').slice(0, 600) });
-    return false;
-  }
-  const action = form.getAttribute('action') || (form.getAttribute('data-ajax-action') ? `/en/${game()}/PostGetAction/${form.getAttribute('data-ajax-action')}` : '');
-  const fields = [];
-  for (const el of form.querySelectorAll('input[name], select[name]')) {
-    const name = el.getAttribute('name');
-    if (el.type === 'checkbox' && !el.hasAttribute('checked')) continue;
-    let value = el.tagName === 'SELECT' ? (el.querySelector('option[selected]') || el.querySelector('option'))?.getAttribute('value') || '' : el.getAttribute('value') || '';
-    if (/amount/i.test(name)) value = String(amount);
-    fields.push([name, value]);
-  }
-  const res = await post(action, fields);
-  note({ step: 'dialog', article: offer.id, amount, url: action, fields: fields.map(([n]) => n), ...res });
-  return res.status >= 200 && res.status < 400;
+  const button = form.querySelector('button[type="submit"], input[type="submit"], button');
+  if (!button) return 'no button in the cart form';
+  button.click();
+  return '';
 }
 
-// items: [{ offer, quantity }]. onEach(item, state) with state 'sent' | 'added' | 'failed'.
-// Returns { added, failed } after checking the cart.
+// items: [{ offer, want, quantity }]. onEach(item, state): 'sent' | 'added' | 'failed'.
 export async function addAll(items, onEach) {
+  const byPage = new Map();
   for (const it of items) {
-    await addDirect(it.offer, it.quantity);
-    onEach?.(it, 'sent');
-    await sleep(700);
+    const url = pageOf(it);
+    if (!byPage.has(url)) byPage.set(url, []);
+    byPage.get(url).push(it);
   }
-  let inCart = await cartArticleIds();
-  const missing = items.filter((it) => !inCart.has(it.offer.id));
-  if (missing.length) {
-    for (const it of missing) {
-      await addViaDialog(it.offer, it.quantity);
-      await sleep(700);
+  for (const [url, list] of byPage) {
+    const frame = await openFrame(url);
+    const doc = frame?.contentDocument;
+    if (!doc || !doc.querySelector('.article-row')) {
+      note({ step: 'frame', url, error: frame ? 'page opened but has no offer rows' : 'page could not be opened in the background (blocked or timed out)', title: doc?.title });
+      frame?.remove();
+      list.forEach((it) => onEach?.(it, 'sent'));
+      continue;
     }
-    inCart = await cartArticleIds();
+    for (const it of list) {
+      const problem = pressAdd(doc, it.offer, it.quantity);
+      note({ step: 'press', url, article: it.offer.id, amount: it.quantity, ...(problem ? { error: problem } : {}) });
+      onEach?.(it, 'sent');
+      await sleep(problem ? 100 : 1800); // give the site's request time to finish
+    }
+    await sleep(800);
+    frame.remove();
   }
+  const inCart = await cartArticleIds();
   const added = items.filter((it) => inCart.has(it.offer.id));
   const failed = items.filter((it) => !inCart.has(it.offer.id));
-  note({ step: 'check', added: added.map((i) => i.offer.id), failed: failed.map((i) => i.offer.id) });
+  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id) });
   for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : 'failed');
   return { added, failed };
 }
 
-export const addToCart = async (offer, quantity) => (await addAll([{ offer, quantity }])).added.length ? 'added' : 'failed';
+// What the live page's own cart code looks like, for the debug report when
+// adding fails: Cardmarket's global AJAX helper and the jQuery submit/click
+// handlers it binds.
+export function siteCartCode() {
+  const out = {};
+  try { out.jcp = typeof window.jcp === 'function' ? String(window.jcp).slice(0, 1500) : null; } catch { /* ignore */ }
+  try {
+    const $ = window.jQuery;
+    const ev = $?._data?.(document, 'events') || {};
+    out.documentHandlers = Object.fromEntries(['submit', 'click'].map((k) => [k, (ev[k] || []).map((h) => ({ selector: h.selector, code: String(h.handler).slice(0, 600) })).filter((h) => /ajax|cart|form/i.test(h.selector + h.code)).slice(0, 5)]));
+  } catch { /* ignore */ }
+  try {
+    out.globals = Object.keys(window).filter((k) => /ajax|cart|basket|jcp/i.test(k)).slice(0, 30);
+  } catch { /* ignore */ }
+  return out;
+}
