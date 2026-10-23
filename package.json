@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",
-    "e2e": "node scripts/build.mjs && node scripts/e2e.mjs",
+    "e2e": "node scripts/build.mjs && node scripts/e2e.mjs && node scripts/e2e-loader.mjs",
     "bench": "node scripts/bench.mjs"
   },
   "license": "MIT",

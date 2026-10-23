@@ -5,6 +5,7 @@
 // and docs/index.html, the install page with the bookmarklet embedded.
 import { build } from 'esbuild';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { loaderBookmarklet } from './loader.js';
 
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const common = { bundle: true, minify: true, format: 'iife', target: ['chrome100', 'firefox100', 'safari15'], write: false, legalComments: 'none' };
@@ -33,6 +34,10 @@ await writeFile('dist/cm-optimizer.js', code + '\n');
 await writeFile('dist/cm-optimizer.user.js', userscript);
 await writeFile('docs/cm-optimizer.user.js', userscript);
 await writeFile('dist/bookmarklet.txt', bookmarklet);
+// The short loader bookmarklet, pointing at a public copy of
+// dist/cm-optimizer.js (set CMOPT_URL to where it is hosted).
+const loaderUrl = process.env.CMOPT_URL || '';
+if (loaderUrl) await writeFile('dist/loader-bookmarklet.txt', loaderBookmarklet(loaderUrl));
 
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const template = await readFile('scripts/install.html', 'utf8');
