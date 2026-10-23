@@ -208,27 +208,20 @@ export function pickSellersToScan(wants, chosen, limit) {
 export async function scanSellers(fetcher, wants, listId, sellers, settings, log) {
   if (!sellers.length || !listId) return { added: 0, param: null };
   const userUrl = (o) => `${toEnglish(o.sellerUrl).replace(/[?#].*$/, '').replace(/\/$/, '')}/Offers/Singles`;
-  // Discover the parameter name from the first seller's filter form.
-  const firstDoc = await fetcher.doc(userUrl(sellers[0]));
-  let param = firstDoc && wantsFilterParam(firstDoc, listId);
-  const candidates = [param, 'idWantsList', 'idWantslist', 'wantsList'].filter(Boolean);
-  param = null;
-  for (const c of candidates) {
-    const url = `${userUrl(sellers[0])}?${c}=${listId}`;
-    const d = await fetcher.doc(url);
-    if (d && isWantsFilterApplied(d, c, listId)) {
-      param = c;
-      fetcher.store(url, { offers: parseOffers(d, url, sellers[0]), pages: pageCount(d) }); // reused by the scan below
-      break;
-    }
-  }
-  if (!param) {
+  const firstUrl = userUrl(sellers[0]);
+  const firstDoc = await fetcher.doc(firstUrl);
+  const found = firstDoc && await discoverWantsFilter(fetcher, firstDoc, firstUrl, listId);
+  if (!found) {
     log?.('Seller scan skipped: could not find the wants-list filter on seller pages.');
-    return { added: 0, param: null, diag: firstDoc && sellerPageDiag(firstDoc, userUrl(sellers[0]), listId) };
+    return { added: 0, param: null, diag: firstDoc && sellerPageDiag(firstDoc, firstUrl, listId) };
   }
+  log?.(`Seller pages filter your wants list with: ${found.template}`);
+  // The filtered address for another seller: same query, that seller's path.
+  const firstPath = firstUrl.replace(/\/Offers\/Singles$/, '');
+  const filteredUrl = (o) => found.template.replace(firstPath, userUrl(o).replace(/\/Offers\/Singles$/, ''));
   let added = 0;
   for (const seller of sellers) {
-    const base = `${userUrl(seller)}?${param}=${listId}`;
+    const base = filteredUrl(seller);
     const pages = [];
     const first = fetcher.cached(base) || await (async () => {
       const d = await fetcher.doc(base);
@@ -238,7 +231,7 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
     })();
     pages.push(first);
     for (let p = 2; p <= Math.min(first.pages || 1, 20); p++) {
-      const url = `${base}&site=${p}`;
+      const url = `${base}${base.includes('?') ? '&' : '?'}site=${p}`;
       const hit = fetcher.cached(url);
       if (hit) { pages.push(hit); continue; }
       const d = await fetcher.doc(url);
@@ -260,7 +253,66 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
     added += n;
     log?.(`${seller.seller}: ${n ? `+${n} offer(s) for ${cards.size} card(s)` : 'nothing new'}`);
   }
-  return { added, param };
+  return { added, param: found.template };
+}
+
+// How a seller page filters by wants list. Tried in order:
+//  1. a <select> whose option is the list id, as a GET parameter;
+//  2. any element carrying the list id (checkbox, radio, option, link) in
+//     a form: the form is submitted the way the browser would, and the
+//     address Cardmarket redirects to is the filtered page (its filter forms
+//     post to PostGetAction/... and redirect to a GET address);
+//  3. a link whose address contains the list id.
+// Returns { template } (the first seller's filtered address) or null.
+export async function discoverWantsFilter(fetcher, doc, sellerUrl, listId) {
+  const id = String(listId);
+  const confirm = async (url) => {
+    const d = await fetcher.doc(url);
+    return d && (isWantsFilterApplied(d, url.match(/[?&]([^=&]+)=\d+/)?.[1] || '', id) || url.includes(id)) ? url : null;
+  };
+  const param = wantsFilterParam(doc, id);
+  if (param) {
+    const url = `${sellerUrl}?${param}=${id}`;
+    if (await confirm(url)) return { template: url };
+  }
+  const carriers = [...doc.querySelectorAll('input, option, button, a[href]')].filter((el) =>
+    el.getAttribute('value') === id || (el.tagName === 'A' && new RegExp(`[?&][^=]+=${id}(&|$)`).test(el.getAttribute('href') || '')));
+  for (const el of carriers) {
+    if (el.tagName === 'A') {
+      const href = el.getAttribute('href');
+      return { template: href.startsWith('/') ? href : `${sellerUrl}${href.startsWith('?') ? '' : '?'}${href.replace(/^.*\?/, '')}` };
+    }
+    const form = el.closest('form');
+    if (!form) continue;
+    const fields = [];
+    for (const f of form.querySelectorAll('input[name], select[name], textarea[name]')) {
+      const name = f.getAttribute('name');
+      if (f.tagName === 'SELECT') {
+        const opt = f.contains(el) ? el : f.querySelector('option[selected]') || f.querySelector('option');
+        if (opt) fields.push([name, opt.getAttribute('value') || '']);
+      } else if (/^(checkbox|radio)$/i.test(f.getAttribute('type') || '')) {
+        if (f === el || (f.hasAttribute('checked') && f.getAttribute('name') !== el.getAttribute('name'))) fields.push([name, f.getAttribute('value') || 'on']);
+      } else if (!/^(submit|button|file)$/i.test(f.getAttribute('type') || '')) {
+        fields.push([name, f.getAttribute('value') || '']);
+      }
+    }
+    if (el.tagName === 'BUTTON' && el.getAttribute('name')) fields.push([el.getAttribute('name'), id]);
+    const method = (form.getAttribute('method') || 'GET').toUpperCase();
+    const action = form.getAttribute('action') || sellerUrl;
+    if (method === 'GET') {
+      const url = `${action.split('?')[0]}?${new URLSearchParams(fields).toString()}`;
+      if (await confirm(url)) return { template: url };
+      continue;
+    }
+    try {
+      const body = new FormData();
+      fields.forEach(([n, v]) => body.append(n, v));
+      const r = await fetch(action, { method: 'POST', body, credentials: 'include' });
+      const url = r.url.replace(/^https?:\/\/[^/]+/, '');
+      if (url.includes(id) || (url.startsWith(sellerUrl) && url.includes('?'))) return { template: url.replace(/[?&]site=\d+/, '') };
+    } catch { /* try the next carrier */ }
+  }
+  return null;
 }
 
 // What a seller's offers page offers as filters, for the debug report when
@@ -278,5 +330,10 @@ function sellerPageDiag(doc, url, listId) {
     forms: [...doc.querySelectorAll('form')].map((f) => flat(`${f.id} ${f.getAttribute('action') || ''} ${f.getAttribute('data-ajax-action') || ''}`)).slice(0, 10),
     wantsLinks: [...doc.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')).filter((h) => /want/i.test(h) || h.includes(String(listId))).slice(0, 15),
     mentionsList: doc.body?.innerHTML.includes(String(listId)) || false,
+    // Every element whose attributes mention the list id, with its form.
+    carriers: [...doc.querySelectorAll('*')].filter((el) => [...el.attributes].some((a) => a.value.includes(String(listId)))).slice(0, 6).map((el) => ({
+      el: el.outerHTML.replace(/\s+/g, ' ').slice(0, 400),
+      form: el.closest('form') ? el.closest('form').outerHTML.replace(/\s+/g, ' ').slice(0, 1500) : null,
+    })),
   };
 }

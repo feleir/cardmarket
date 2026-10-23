@@ -41,6 +41,53 @@ function openFrame(url) {
   });
 }
 
+// Watch the frame's requests and Cardmarket's result messages. Its cart
+// buttons go through jcp(), which queues calls (jcpStack / doingJCPCall) and
+// sends them one at a time with XMLHttpRequest; closing the frame while one
+// is queued or in flight cancels it, which is how early versions lost the
+// last item on each page.
+function watch(win) {
+  const w = { inflight: 0, messages: [] };
+  try {
+    const X = win.XMLHttpRequest.prototype;
+    const send = X.send;
+    X.send = function (...args) {
+      w.inflight++;
+      this.addEventListener('loadend', () => { w.inflight--; });
+      return send.apply(this, args);
+    };
+  } catch { /* ignore */ }
+  try {
+    const R = win.AJAXResponse;
+    const show = R && R.showResultMessage;
+    if (typeof show === 'function') {
+      R.showResultMessage = function (res, ...rest) {
+        try {
+          const text = res && (res.message || res.messages || res.resultMessage || res.text);
+          w.messages.push(String(typeof text === 'object' ? JSON.stringify(text) : text || '').slice(0, 200));
+        } catch { /* ignore */ }
+        return show.call(this, res, ...rest);
+      };
+    }
+  } catch { /* ignore */ }
+  return w;
+}
+
+async function settled(win, w, { min = 400, max = 15000 } = {}) {
+  const start = Date.now();
+  await sleep(min);
+  let quietSince = 0;
+  while (Date.now() - start < max) {
+    let busy = w.inflight > 0;
+    try { busy ||= !!win.doingJCPCall || (win.jcpStack && win.jcpStack.length > 0); } catch { /* ignore */ }
+    if (busy) quietSince = 0;
+    else if (!quietSince) quietSince = Date.now();
+    else if (Date.now() - quietSince > 500) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
 function pressAdd(doc, offer, amount) {
   const row = doc.getElementById(`articleRow${offer.id}`) || doc.getElementById(`stockRow${offer.id}`);
   if (!row) return 'row not on the page (sold, or moved to a later page)';
@@ -57,8 +104,7 @@ function pressAdd(doc, offer, amount) {
   return '';
 }
 
-// items: [{ offer, want, quantity }]. onEach(item, state): 'sent' | 'added' | 'failed'.
-export async function addAll(items, onEach) {
+async function pressAll(items, onEach) {
   const byPage = new Map();
   for (const it of items) {
     const url = pageOf(it);
@@ -74,16 +120,33 @@ export async function addAll(items, onEach) {
       list.forEach((it) => onEach?.(it, 'sent'));
       continue;
     }
+    const win = frame.contentWindow;
+    const w = watch(win);
     for (const it of list) {
+      const before = w.messages.length;
       const problem = pressAdd(doc, it.offer, it.quantity);
-      note({ step: 'press', url, article: it.offer.id, amount: it.quantity, ...(problem ? { error: problem } : {}) });
+      const finished = problem ? true : await settled(win, w);
+      note({ step: 'press', url, article: it.offer.id, amount: it.quantity,
+        ...(problem ? { error: problem } : {}), ...(finished ? {} : { error: 'no answer from Cardmarket within 15 s' }),
+        ...(w.messages.length > before ? { message: w.messages.slice(before).join(' | ') } : {}) });
       onEach?.(it, 'sent');
-      await sleep(problem ? 100 : 1800); // give the site's request time to finish
     }
-    await sleep(800);
+    await settled(win, w, { min: 300 });
     frame.remove();
   }
-  const inCart = await cartArticleIds();
+}
+
+// items: [{ offer, want, quantity }]. onEach(item, state): 'sent' | 'added' | 'failed'.
+// Anything not in the cart after the first pass is pressed once more.
+export async function addAll(items, onEach) {
+  await pressAll(items, onEach);
+  let inCart = await cartArticleIds();
+  const retry = items.filter((it) => !inCart.has(it.offer.id));
+  if (retry.length) {
+    note({ step: 'retry', articles: retry.map((i) => i.offer.id) });
+    await pressAll(retry);
+    inCart = await cartArticleIds();
+  }
   const added = items.filter((it) => inCart.has(it.offer.id));
   const failed = items.filter((it) => !inCart.has(it.offer.id));
   note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id) });

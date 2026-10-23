@@ -176,3 +176,28 @@ test('World Championship Deck printings are excluded for any-printing wants by d
   assert.equal(offerAllowed({ ...o, expansion: 'Pro Tour Collector Set' }, want, f, DEFAULT_SETTINGS), false);
   assert.equal(offerAllowed({ ...o, expansion: 'Mystery Booster 2' }, want, f, DEFAULT_SETTINGS), true);
 });
+
+test('seller-page wants filter found through its form and the redirect', async () => {
+  const { discoverWantsFilter } = await import('../src/collect.js');
+  const seller = '/en/Magic/Users/MikoSellerCH/Offers/Singles';
+  // No <select> for the list: a radio in a POST filter form, like the
+  // product filter forms that post to PostGetAction and redirect.
+  const page = doc(`<!doctype html><html><body><div id="tabContent-Wants"><form method="POST" action="/en/Magic/PostGetAction/User_Offers_FilterWants">
+    <input type="hidden" name="__cmtkn" value="t"><input type="hidden" name="idUser" value="77">
+    <input type="radio" name="idWantsList" value="0" checked><input type="radio" name="idWantsList" value="21758327">
+    <button type="submit">Filter</button></form></div></body></html>`);
+  const posted = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    posted.push([url, [...init.body.entries()]]);
+    return { url: `https://www.cardmarket.com${seller}?idWantsList=21758327&sortBy=price` };
+  };
+  try {
+    const found = await discoverWantsFilter({ doc: async () => null }, page, seller, '21758327');
+    assert.equal(found.template, `${seller}?idWantsList=21758327&sortBy=price`);
+    assert.equal(posted[0][0], '/en/Magic/PostGetAction/User_Offers_FilterWants');
+    assert.deepEqual(posted[0][1], [['__cmtkn', 't'], ['idUser', '77'], ['idWantsList', '21758327']]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

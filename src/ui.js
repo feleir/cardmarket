@@ -321,7 +321,6 @@ export function mount() {
         setProgress(i / n, w ? `${i + 1}/${n} · ${w.name}` : 'Optimizing…');
         if (i > 0) log(describeWant(wants[i - 1]));
       });
-      log(describeWant(wants.at(-1)));
       if (wants.every((w) => !w.offers.length)) log('⚠ No card got any offers. Tap "Copy debug report" below and send it, so the page reading can be fixed.');
       const opts = optOptions();
       const scan = shouldScanSellers(wants, s.scanMode || 'auto');
@@ -379,6 +378,7 @@ export function mount() {
       wantsRowHtml: wants[0]?.rowHtml,
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
+      unreadOffer: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unreadOffer,
       log: st.log.slice(-40),
       cart: cartLog.slice(-12),
       siteCart: st.cartMsg && !st.cartMsg.ok ? siteCartCode() : undefined,

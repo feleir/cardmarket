@@ -4,7 +4,7 @@
 // page, and the result and the add-to-cart replay are checked.
 //
 // Two runs, both with the seller scan on Auto. In the first, every card page
-// shows all its offers, so the scan is skipped and the best cart is 76,33 €
+// shows all its offers, so the scan is skipped and the best cart is 76,53 €
 // (bigstore_ch only shows up on the Counterspell page). In the second, the
 // Counterspell page holds offers back ("Show more results"), so the scan
 // runs: bigstore_ch's own stock (filtered by the wants list, over two pages)
@@ -34,7 +34,7 @@ const pages = {
     { url: `${P}/Magic-2010/Lightning-Bolt`, from: '0,50 €' }, { url: `${P}/Alpha/Lightning-Bolt`, from: '150,00 €' },
   ] }),
   [`${P}/Magic-2010/Lightning-Bolt`]: productPage({ title: 'Lightning Bolt', expansion: 'Magic 2010', rows: [
-    offerRow({ id: 10, seller: 'zurich_cards', price: '0,60 €', count: 4 }),
+    offerRow({ id: 10, seller: 'zurich_cards', price: '0,60 €', count: 3 }),
     offerRow({ id: 11, seller: 'cheap_de', country: 'Germany', price: '0,10 €', count: 8 }),
     offerRow({ id: 12, seller: 'geneva_tcg', price: '0,80 €', count: 2 }),
   ] }),
@@ -76,12 +76,24 @@ function sellerPage(seller, q) {
 // a mock AJAX endpoint); posting the form anywhere else does nothing.
 const cart = new Map();
 const fieldsOf = (body) => Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
+// Like Cardmarket's jcp(): one XMLHttpRequest at a time, further presses
+// wait in jcpStack, and the server answers slowly. Closing the page while
+// something is queued loses it, as happened live before the fix.
 const pageScript = `<script>
+  window.jcpStack = []; window.doingJCPCall = false;
+  function send(body) {
+    window.doingJCPCall = true;
+    const x = new XMLHttpRequest();
+    x.open('POST', '/en/Magic/AjaxAction/ShoppingCart_Add');
+    x.onloadend = () => { window.doingJCPCall = false; const next = window.jcpStack.shift(); if (next) send(next); };
+    x.send(body);
+  }
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('form[data-ajax-action]');
     if (!f) return;
     e.preventDefault();
-    fetch('/en/Magic/AjaxAction/' + f.dataset.ajaxAction, { method: 'POST', body: new FormData(f), credentials: 'include' });
+    const body = new FormData(f);
+    if (window.doingJCPCall) window.jcpStack.push(body); else send(body);
   });
 </script>`;
 function cartRoute(u, req) {
@@ -108,8 +120,9 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   const ctx = await browser.newContext({ ...pw.devices['Pixel 7'] });
   const page = await ctx.newPage();
   const requested = [];
-  await page.route('https://www.cardmarket.com/**', (route) => {
+  await page.route('https://www.cardmarket.com/**', async (route) => {
     const u = new URL(route.request().url());
+    if (u.pathname.startsWith('/en/Magic/AjaxAction/')) await new Promise((r) => setTimeout(r, 4000)); // a slow answer
     requested.push(u.pathname + u.search);
     const m = u.pathname.match(/^\/en\/Magic\/Users\/([^/]+)\/Offers\/Singles$/);
     let html = cartRoute(u, route.request()) ?? (m ? sellerPage(m[1], u.searchParams) : pages[u.pathname]);
@@ -150,19 +163,22 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   await ctx.close();
 }
 
-// Hand-computed from the CH tiers (letter 1,83 €, tracked above 25 € 8,50 €):
-// Sheoldred + 2 Counterspell from geneva_tcg (63,60 + 8,50 = 72,10) and the
-// 4 Bolts from zurich_cards (2,40 + 1,83) = 76,33 €. Splitting Sheoldred to
-// basel_magic and Counterspell to lugano costs 68,50 + 3,63 + 4,23 = 76,36 €.
-await scenario('complete-pages', { scanMode: 'auto' }, '76,33 €', async ({ page, text, requested, fail }) => {
+// Hand-computed from the CH tiers (letter 1,83 €, up to 17 cards 2,60 €,
+// tracked above 25 € 8,50 €): Sheoldred + 2 Counterspell + 1 Bolt from
+// geneva_tcg (61 + 2,60 + 0,80 + 8,50 = 72,90) and 3 Bolts from zurich_cards
+// (1,80 + 1,83) = 76,53 €. Next best: geneva also taking its 2nd Bolt
+// (73,70 + 3,03 = 76,73), or Sheoldred alone from basel_magic (78,39).
+// Two of the cart items (Bolts from zurich_cards and geneva_tcg) sit on the
+// same page, so the second press is queued behind a slow first answer.
+await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ page, text, requested, fail }) => {
   if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran although every card page was complete');
   await page.click('#cmopt-root >> text=Add all to cart');
-  await page.waitForSelector('#cmopt-root >> text=added to your cart', { timeout: 30000 }).catch(() => {});
+  await page.waitForSelector('#cmopt-root >> text=added to your cart', { timeout: 90000 }).catch(() => {});
   const got = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
-  if (got !== '10x4 21x1 31x2') fail(`cart holds: ${got}`);
+  if (got !== '10x3 12x1 21x1 31x2') fail(`cart holds: ${got}`);
   const after = await page.locator('#cmopt-root main').innerText();
-  if (!/All 3 added to your cart/.test(after)) fail('cart result not reported');
-  if ((after.match(/In cart ✓/g) || []).length !== 3) fail('items not marked as in the cart');
+  if (!/All 4 added to your cart/.test(after)) fail('cart result not reported');
+  if ((after.match(/In cart ✓/g) || []).length !== 4) fail('items not marked as in the cart');
   await page.screenshot({ path: 'e2e-out/complete-pages-3-cart.png' });
 });
 
