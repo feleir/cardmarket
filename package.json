@@ -7,11 +7,13 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",
-    "e2e": "node scripts/build.mjs && node scripts/e2e.mjs"
+    "e2e": "node scripts/build.mjs && node scripts/e2e.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "license": "MIT",
   "devDependencies": {
     "esbuild": "^0.24.0",
+    "highs": "^1.15.4",
     "linkedom": "^0.18.5"
   }
 }

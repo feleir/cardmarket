@@ -5,7 +5,8 @@ import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING } 
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
-import { loadWantsList, collectOffers, toEnglish } from './collect.js';
+import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers } from './collect.js';
+import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
 import { addToCart, addAll } from './cart.js';
 
@@ -191,6 +192,10 @@ export function mount() {
         <div><label>Extra cost per seller €</label><input type="number" min="0" step="0.1" data-k="sellerPenalty" value="${s.sellerPenalty}"></div>
       </div>
       <p class="muted">"Extra cost per seller" makes the optimizer prefer fewer parcels unless splitting saves more than that amount.</p>
+      <label>Deep-scan the stock of this many top sellers</label>
+      <input type="number" min="0" max="50" data-k="scanSellers" value="${s.scanSellers}">
+      <p class="muted">Card pages only list the cheapest offers. The sellers that matter most get their whole stock read, filtered by your wants list, so bundles hidden past the first page are found (about 1–2 pages per seller).</p>
+      <label><input type="checkbox" data-k="exact" ${s.exact ? 'checked' : ''}> Exact solver — proves the cheapest cart (downloads ≈3.5 MB once; not used with a seller cap)</label>
       <details><summary>Shipping estimates</summary>
         <p class="muted">One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. Check real prices for your country on Cardmarket's Shipping Costs help page.</p>
         ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}`}</label>
@@ -201,6 +206,7 @@ export function mount() {
           <div><label>Delay between pages (ms)</label><input type="number" min="300" step="100" data-k="delayMs" value="${s.delayMs}"></div>
           <div><label>Optimizer time (ms)</label><input type="number" min="200" step="500" data-k="timeBudgetMs" value="${s.timeBudgetMs}"></div>
         </div>
+        <label>Exact solver time limit (ms)</label><input type="number" min="1000" step="1000" data-k="exactTimeMs" value="${s.exactTimeMs}">
         <label>Keep fetched offers for (minutes)</label><input type="number" min="0" data-k="cacheMinutes" value="${s.cacheMinutes}">
         <p><button class="btn sec sm" data-act="clearCache">Clear fetched offers</button>
            <button class="btn sec sm" data-act="reset">Reset settings</button></p>
@@ -228,7 +234,9 @@ export function mount() {
         <span>Sellers / parcels</span><b>${r.groups.length}</b>
         <span>Cheapest-per-card instead</span><b>${money(r.baseline.total)} · ${r.baseline.sellers} sellers</b>
       </div>
-      ${saved > 0.005 ? `<p class="ok">Saves about ${money(saved)} vs. picking the cheapest copy of each card.</p>` : ''}
+      ${saved > 0.005 ? `<p class="ok">Saves about ${money(saved)} vs. picking the cheapest copy of each card${r.itemsCost > r.baseline.itemsCost + 0.005
+        ? `: pays ${money(r.itemsCost - r.baseline.itemsCost)} more for cards to save ${money(r.baseline.shippingCost - r.shippingCost)} on shipping (${r.baseline.sellers - r.groups.length} fewer parcels)` : ''}.</p>` : ''}
+      ${r.exact ? '<p class="muted">Checked with the exact solver.</p>' : ''}
       ${missing ? `<p class="warn">${missing} card(s) could not be found with your filters (see bottom).</p>` : ''}
       <p class="muted">${r.stats.offersConsidered} offers from ${r.stats.sellersConsidered} sellers · ${r.stats.restarts} searches in ${r.stats.ms} ms</p>
     </div>
@@ -241,7 +249,8 @@ export function mount() {
         </div>
         ${g.items.map((it, ii) => `<div class="item">
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
-            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div></div>
+            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
+            ${it.cheapest ? `<div class="muted">Cheapest: ${money(it.cheapest.price)} at ${esc(it.cheapest.seller)} — bundled here, cheaper with shipping</div>` : ''}</div>
           <div class="p">${money(it.offer.price)}<br><button class="btn sm sec" data-add="${gi}:${ii}">Add</button></div>
         </div>`).join('')}
         <p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>
@@ -287,8 +296,20 @@ export function mount() {
         if (i > 0) { const p = wants[i - 1]; log(`${p.name}: ${p.offers.length} offer(s)`); }
       });
       log(`${wants.at(-1).name}: ${wants.at(-1).offers.length} offer(s)`);
+      const opts = optOptions();
+      if (s.scanSellers > 0) {
+        // A quick first cart says which sellers matter; their full stock
+        // matching the wants list may hold copies the card pages did not show.
+        const first = optimize(wants, { ...opts, timeBudgetMs: Math.min(1000, s.timeBudgetMs) });
+        const picks = pickSellersToScan(wants, first.groups.map((g) => g.seller), s.scanSellers);
+        const listId = (st.listUrl.match(/\/Wants\/(\d+)/) || [])[1];
+        setProgress(0.95, `Scanning ${picks.length} sellers' stock for your other cards…`);
+        log(`Scanning the stock of ${picks.length} sellers for more of your cards…`);
+        const { added } = await scanSellers(fetcher, wants, listId, picks, s, log);
+        log(`Seller scan added ${added} offer(s).`);
+      }
       log(`Fetched ${fetcher.requests} page(s).`);
-      reoptimize();
+      await reoptimize();
     } catch (e) {
       if (e instanceof StoppedError) log('Stopped. Pages fetched so far are cached; run again to continue.');
       else if (e instanceof BlockedError) log('⚠ ' + e.message);
@@ -298,13 +319,36 @@ export function mount() {
     }
   }
 
-  function reoptimize() {
+  const optOptions = () => {
     const s = st.settings;
-    st.running = false;
+    return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs };
+  };
+
+  async function reoptimize() {
+    const s = st.settings;
     const wants = (st.wants || []).filter((w) => w.offers);
-    st.result = optimize(wants, {
-      shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
-    });
+    const opts = optOptions();
+    // The exact model has no seller cap, so it is only used without one.
+    if (s.exact && !s.maxSellers) {
+      try {
+        setProgress(0.97, 'Loading exact solver…');
+        log('Loading exact solver (≈3.5 MB, cached by the browser after the first time)…');
+        const highs = await loadHighs();
+        setProgress(0.98, 'Solving exactly…');
+        await new Promise((r) => setTimeout(r, 50)); // let the label paint before the solver blocks
+        const t = Date.now();
+        const ex = solveWith(highs, wants, { ...opts, timeLimitMs: s.exactTimeMs });
+        if (ex) {
+          opts.warmStart = ex.picks;
+          log(`Exact solver: ${ex.status === 'Optimal' ? 'proven optimal' : 'best found in time limit'} (${Date.now() - t} ms).`);
+        }
+      } catch (e) {
+        log('Exact solver unavailable here (' + (e.message || e) + '); using the heuristic only.');
+      }
+    }
+    st.result = optimize(wants, opts);
+    st.result.exact = !!opts.warmStart;
+    st.running = false;
     st.tab = 'results';
     render();
   }

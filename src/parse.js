@@ -123,8 +123,8 @@ export function parseWantsList(doc) {
   return wants;
 }
 
-// Pagination on a wants list: the highest ?site=N linked from the page.
-export function wantsListPageCount(doc) {
+// Pagination (wants lists, seller offers): the highest ?site=N linked from the page.
+export function pageCount(doc) {
   let max = 1;
   for (const a of doc.querySelectorAll('a[href*="site="]')) {
     const m = (a.getAttribute('href') || '').match(/[?&]site=(\d+)/);
@@ -138,9 +138,10 @@ const expansionFromUrl = (href) => {
   return m ? decodeURIComponent(m[1]).replace(/-/g, ' ') : '';
 };
 
-// A product page (one printing) or card page (all printings) -> offers.
-// pageUrl is used to name the printing when rows do not carry it.
-export function parseOffers(doc, pageUrl = '') {
+// A product page (one printing), card page (all printings) or a seller's
+// offers page -> offers. pageUrl names the printing when rows do not carry
+// it; seller fills in the seller on a seller's own page, whose rows have none.
+export function parseOffers(doc, pageUrl = '', seller = null) {
   const offers = [];
   const pageExpansion = flat(tipOf(doc.querySelector('.product-attributes .expansion-symbol, a[href*="/Expansions/"].expansion-symbol')))
     || expansionFromUrl(pageUrl);
@@ -150,18 +151,19 @@ export function parseOffers(doc, pageUrl = '') {
     const idMatch = (row.id || '').match(/(\d+)/);
     if (!idMatch) continue;
     const sellerLink = row.querySelector('.seller-name a[href*="/Users/"]');
-    if (!sellerLink) continue; // own stock rows and table headers have no seller
-    const seller = flat(sellerLink.textContent);
+    if (!sellerLink && !seller) continue; // own stock rows and table headers have no seller
+    const sellerName = sellerLink ? flat(sellerLink.textContent) : seller.seller;
 
     const locEl = [...row.querySelectorAll('.seller-name [aria-label], .seller-name [data-bs-original-title]')]
       .find((e) => /location/i.test(tipOf(e)));
-    const countryName = tipOf(locEl).replace(/^.*?:\s*/, '');
+    const countryName = locEl ? tipOf(locEl).replace(/^.*?:\s*/, '') : seller?.countryName || '';
     const country = countryByName(countryName);
 
     const ratingEl = row.querySelector('[class*="fonticon-seller-rating-"]');
     const ratingKey = ((ratingEl?.className || '').match(/fonticon-seller-rating-([a-z-]+)/) || [])[1] || 'none';
     const sellCountEl = row.querySelector('.sell-count');
-    const sales = parseInt(flat(sellCountEl?.textContent).replace(/\D/g, ''), 10) || 0;
+    const sales = parseInt(flat(sellCountEl?.textContent).replace(/\D/g, ''), 10) || seller?.sales || 0;
+    const rating = ratingEl || !seller ? RATINGS[ratingKey] ?? 0 : seller.rating;
 
     const attrs = row.querySelector('.product-attributes') || row;
     const condition = conditionByCode(flat(attrs.querySelector('.article-condition .badge, .article-condition')?.textContent))?.id || 0;
@@ -174,7 +176,8 @@ export function parseOffers(doc, pageUrl = '') {
     const expEl = attrs.querySelector('.expansion-symbol');
     const productLink = row.querySelector('a[href*="/Products/Singles/"]');
     const productUrl = productLink?.getAttribute('href') || pageUrl.replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '');
-    const expansion = flat(tipOf(expEl)) || expansionFromUrl(productLink?.getAttribute('href')) || pageExpansion;
+    const expansion = flat(tipOf(expEl)) || expansionFromUrl(productLink?.getAttribute('href')) || (seller ? '' : pageExpansion);
+    const name = seller ? flat(productLink?.textContent) : pageName;
 
     const priceEl = row.querySelector('.price-container .color-primary') || row.querySelector('.color-primary');
     const price = parsePrice(priceEl?.textContent);
@@ -192,11 +195,11 @@ export function parseOffers(doc, pageUrl = '') {
     const cartModal = row.querySelector('a[data-modal*="ShoppingCart"]')?.getAttribute('data-modal') || '';
 
     offers.push({
-      id: idMatch[1], seller, sellerUrl: sellerLink.getAttribute('href'),
+      id: idMatch[1], seller: sellerName, sellerUrl: sellerLink?.getAttribute('href') || seller?.sellerUrl || '',
       countryId: country?.id || 0, countryName, countryCode: country?.code || '',
-      rating: RATINGS[ratingKey] ?? 0, sales,
+      rating, sales,
       condition, language, isFoil, isSigned, isAltered,
-      expansion, productUrl, name: pageName,
+      expansion, productUrl, name,
       price, available, comment, cartForm, cartModal,
     });
   }
@@ -225,4 +228,22 @@ export function parseVersionLinks(doc, cardUrl) {
 export function cartCount(doc) {
   const el = doc.querySelector('#cart .badge, .shopping-cart .badge, a[href*="ShoppingCart"] .badge');
   return parseInt(flat(el?.textContent), 10) || 0;
+}
+
+// On a seller's offers page, the filter form has a wants-list picker. Find
+// its parameter name from the option whose value is the list's id, instead
+// of guessing it; null if the page has no such picker.
+export function wantsFilterParam(doc, listId) {
+  for (const sel of doc.querySelectorAll('select[name]')) {
+    if ([...sel.options || sel.querySelectorAll('option')].some((o) => String(o.getAttribute('value')) === String(listId))) {
+      return sel.getAttribute('name');
+    }
+  }
+  return null;
+}
+
+export function isWantsFilterApplied(doc, param, listId) {
+  const sel = doc.querySelector(`select[name="${param}"]`);
+  const opt = sel && [...sel.querySelectorAll('option')].find((o) => String(o.getAttribute('value')) === String(listId));
+  return !!opt && (opt.hasAttribute('selected') || sel.value === String(listId));
 }

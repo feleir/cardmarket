@@ -46,36 +46,67 @@ Run `npm install && npm run build`. That produces:
 
 ## How the optimizer works
 
+The point is to beat Cardmarket's Shopping Wizard where it usually goes wrong. Sometimes another seller is cheaper. Sometimes paying for a second parcel is cheaper than taking a pricier copy, and sometimes the opposite: one parcel with slightly pricier cards beats several cheap ones. So the tool compares **every seller against every other**, with shipping included.
+
 It picks one offer per wanted copy so that the cost below is as low as possible:
 
 ```
 Σ item prices  +  Σ over sellers used ( shipping(cards, value) + extra cost per seller )
 ```
 
-It respects each article's available quantity and the optional cap on sellers. Shipping per seller is the cheapest tier that fits the parcel. Cardmarket requires tracked shipping above €25, so the untracked tiers stop there.
+It respects each article's available quantity, and an article listed under two wants is only bought as often as it is in stock. You can cap the number of sellers. Shipping per seller is the cheapest tier that fits the parcel. Cardmarket requires tracked shipping above €25, so the untracked tiers stop there.
 
-This is a facility-location problem (NP-hard), so it uses a heuristic instead of an exact solver:
-1. **Greedy start.** Scarce and expensive cards are placed first, each at its cheapest *marginal* cost (price plus extra shipping).
-2. **Local search.** It repeats three moves until none helps:
-   - move a single copy to another seller;
-   - **close a seller** and move its copies elsewhere;
-   - **open a seller** and pull every copy it can supply.
-3. **Restarts.** It repeats from randomised starts within a time budget (3 s by default) and keeps the best result.
+### 1. Find every seller worth considering (deep seller scan)
 
-In the tests it finds the exact optimum on random small cases compared against brute force (it may miss on at most 2 of 40). On a 150-want, 80-seller case it finishes in 2 s, about 6% cheaper than cheapest-per-card, with 28 parcels instead of 61.
+A card's page only lists the cheapest offers for *that card*. So a seller who has 10 of your cards at slightly higher prices may show up for only one of them, or for none, even though one parcel from them could replace five. After a first pass, the tool takes the sellers who appeared for the most of your cards plus everyone in the cart (10 by default). For each, it reads that seller's whole stock **filtered by your wants list**, every page of it.
+
+The filter's parameter name isn't hard-coded. It's read from the seller page's own filter form, from the option whose value is your wants list id. Every offer found this way goes through the same checks: country, language, condition, foil, max price, rating, blocked sellers.
+
+### 2. Optimize
+
+The problem is NP-hard (a facility-location problem with stepped shipping costs), so there are two solvers.
+
+**Heuristic** (always runs, a few seconds):
+- **Starts:**
+  - a greedy cart that places scarce and expensive cards first, each at its cheapest *marginal* cost (price plus extra shipping);
+  - the cheapest-copy-of-every-card cart. Starting from this one means the result is **never worse than buying cheapest per card**.
+- **Local search**, repeating these moves until none helps:
+  - move one copy to another seller;
+  - **chain move**: copy A goes into seller T, and one of T's copies moves out. This gets past shipping thresholds, where a parcel at 4 cards / €24.99 rejects any single extra card;
+  - **close a seller** and spread its copies over the others;
+  - **pull** to any seller, in the cart or not, the copies it can supply: first only those that cost little more there, then everything it stocks.
+- **Iterated search:** shake the best cart (drop 1–3 sellers, re-pick ~15% of copies, or pull to a random seller), search again, keep any improvement. Fresh random starts are mixed in.
+
+**Exact solver** (optional, *Setup → Optimizer → Exact solver*): the same problem as a mixed-integer program solved by [HiGHS](https://highs.dev) compiled to WebAssembly. It downloads about 3.5 MB from jsDelivr the first time, and the browser caches it after that. The heuristic then polishes its answer. If cardmarket.com's content-security policy blocks the download, the tool says so and uses the heuristic. It isn't used together with a seller cap.
+
+### How close is the heuristic?
+
+`npm run bench` compares the heuristic (1.5 s) with the proven optimum from HiGHS on realistic random carts: a few big stores at a mark-up, many small sellers who are cheapest on a few cards, Swiss shipping tiers.
+
+| Cart size | Exact optimum found | Mean gap | Worst gap |
+|---|---|---|---|
+| 20 wants, 15 sellers | 11 / 12 | 0.04 % | 0.48 % (~€1) |
+| 35 wants, 22 sellers | 10 / 12 | 0.01 % | 0.09 % |
+| 50 wants, 30 sellers | 3 / 12 | 0.08 % | 0.26 % |
+
+Before the cheapest-per-card start, the chain move and the iterated search were added, the worst gap at 50 wants was 0.94%. In one case it was even worse than cheapest-per-card. Both cases now have regression tests (`test/exact.test.js`).
+
+The results explain the trade-offs: how much more you pay for cards versus how much you save on shipping, and, for each bundled card, the cheapest copy elsewhere that was passed up.
 
 ## Tests
 
 ```
-npm test        # parser, filter and optimizer unit tests (incl. brute-force comparison)
+npm test        # parser, filter, seller-scan matching and optimizer tests (incl. brute force and exact-solver comparisons)
 npm run e2e     # headless Chromium at Pixel 7 size against a mocked cardmarket.com
+npm run bench   # heuristic vs exact optimum on realistic carts
 ```
 
 The e2e test checks four things:
 - a German seller served despite `sellerCountry=4` gets filtered out;
 - the total matches a hand-computed optimum;
 - a card with no offers is reported;
-- "Add all to cart" replays Cardmarket's own add-to-cart form, with the right article ids and amounts.
+- "Add all to cart" replays Cardmarket's own add-to-cart form, with the right article ids and amounts;
+- a second run with the seller scan and exact solver finds a hidden bundle: a store that shows up only on the Counterspell page also stocks Sheoldred and the Bolts on page 2 of its wants-filtered stock. The best cart drops from €75.90 (3 parcels) to €73.60 (1 parcel).
 
 ## Limitations: please check on the live site
 
@@ -84,7 +115,8 @@ My build environment can't reach cardmarket.com, so the markup comes from real p
 - **Offer rows** (`.article-row`, `Item location:` tooltip, `.price-container`, `.item-count`, the `ShoppingCart_Add_AddArticlesFromProductPage` form) match real captured HTML.
 - **Wants list table** (`#WantsListTable`, `input[data-id-want]`, `td.amount`, `td.languages`, ternary columns) is rebuilt from other tools' parsers.
 - **"Any printing" wants** link to `/Cards/<name>`. If that page lists offers, they're used directly. Otherwise the tool follows the printing links and fetches the cheapest `maxVersions` printings.
-- **Only the first page of offers** per card is read (Cardmarket shows the cheapest matching offers first). With a country filter that's usually all of them.
+- **Only the first page of offers** per card is read (Cardmarket shows the cheapest matching offers first). The deep seller scan covers what that misses for the sellers that matter most.
+- **Seller scan:** the wants-list filter on seller pages is found from the page's own filter form. If none can be confirmed, the scan is skipped and the log says so.
 - **Add to cart** submits a copy of the row's own form inside the live page, so Cardmarket's own script and token handle it. If no script picks it up, it opens Cardmarket's "put in cart" dialog instead. If that also fails, it opens the product page.
 - **Shipping** is an estimate. Check the tiers for your country on Cardmarket's *Shipping Costs* help page. The cart always shows the real amount before you pay.
 

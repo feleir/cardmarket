@@ -98,3 +98,22 @@ test('parseWantsOverview finds lists', () => {
   const lists = parseWantsOverview(doc(wantsOverview([{ id: 9, name: 'Deck A' }, { id: 10, name: 'Deck B' }])));
   assert.deepEqual(lists.map((l) => [l.id, l.name]), [['9', 'Deck A'], ['10', 'Deck B']]);
 });
+
+test('seller-page offers are matched back to wants', async () => {
+  const { matchWants, pickSellersToScan } = await import('../src/collect.js');
+  const wants = [
+    { idWant: '1', kind: 'product', name: 'Sheoldred, the Apocalypse', url: '/de/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse' },
+    { idWant: '2', kind: 'card', name: 'Lightning Bolt', url: '/en/Magic/Cards/Lightning-Bolt' },
+  ];
+  assert.deepEqual(matchWants({ productUrl: '/en/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse', name: 'Sheoldred, the Apocalypse' }, wants).map((w) => w.idWant), ['1']);
+  assert.deepEqual(matchWants({ productUrl: '/en/Magic/Products/Singles/Alpha/Lightning-Bolt', name: 'Lightning Bolt (V.2)' }, wants).map((w) => w.idWant), ['2']);
+  assert.deepEqual(matchWants({ productUrl: '/en/Magic/Products/Singles/Alpha/Lightning-Dragon', name: 'Lightning Dragon' }, wants), []);
+
+  const ws = [
+    { offers: [{ seller: 'a' }, { seller: 'b' }] },
+    { offers: [{ seller: 'a' }, { seller: 'c' }] },
+    { offers: [{ seller: 'a' }, { seller: 'b' }, { seller: 'd' }] },
+  ];
+  assert.deepEqual(pickSellersToScan(ws, ['d'], 2).map((o) => o.seller), ['d', 'a']);
+  assert.deepEqual(pickSellersToScan(ws, [], 3).map((o) => o.seller), ['a', 'b', 'c']);
+});

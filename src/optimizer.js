@@ -5,8 +5,9 @@
 //
 // This is a facility-location style problem (NP-hard in general), so it is
 // solved with a greedy construction followed by local search: move single
-// copies, close a seller and redistribute its copies, open a seller and pull
-// copies to it; repeated from randomized starts within a time budget. The
+// copies, close a seller and redistribute its copies, pull copies to a
+// seller; then iterated local search (shake the best cart, search again)
+// within a time budget. The
 // cheapest-copy-everywhere baseline is reported alongside for comparison.
 import { tierCost, tiersFor } from './shipping.js';
 
@@ -26,7 +27,8 @@ function mulberry32(seed) {
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // wants: [{ key, name, quantity, offers: [{ id, seller, countryCode, price, available, ... }] }]
-// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed }
+// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed,
+//         warmStart: picks[wantIndex] = [{ id, count }] e.g. from the exact solver }
 export function optimize(wants, opts = {}) {
   const shipping = opts.shipping || {};
   const penalty = Number(opts.sellerPenalty) || 0;
@@ -148,6 +150,43 @@ export function optimize(wants, opts = {}) {
     return any;
   };
 
+  // Two linked moves: copy u goes to seller t, and one of t's copies moves
+  // out to wherever is best. This gets past shipping thresholds a single
+  // move cannot (a parcel at 4 cards / 24.99 rejects any one extra card).
+  const chainPass = (deadline) => {
+    let any = false;
+    let cur = score();
+    for (let u = 0; u < units.length && now() < deadline; u++) {
+      const cu = assign[u];
+      if (cu < 0) continue;
+      const s = offers[cu].s;
+      let done = false;
+      for (const oi of wantOffers[units[u]]) {
+        const t = offers[oi].s;
+        if (done || t === s || sN[t] === 0) continue;
+        const atT = unitsOf(t);
+        for (const v of atT) {
+          const cv = assign[v];
+          take(u);
+          if (used[offers[oi].a] >= arts[offers[oi].a]) { put(u, cu); break; }
+          put(u, oi);
+          take(v);
+          const b = bestFor(v, null);
+          if (b >= 0 && b !== cv) {
+            put(v, b);
+            const sc = score();
+            if (sc < cur - EPS) { cur = sc; any = true; done = true; break; }
+            take(v);
+          }
+          put(v, cv);
+          take(u);
+          put(u, cu);
+        }
+      }
+    }
+    return any;
+  };
+
   const unitsOf = (s) => {
     const r = [];
     for (let u = 0; u < units.length; u++) if (assign[u] >= 0 && offers[assign[u]].s === s) r.push(u);
@@ -169,19 +208,22 @@ export function optimize(wants, opts = {}) {
     return true;
   };
 
-  // Open seller s: pull every copy it can supply, then let the rest settle.
-  const openSeller = (s) => {
+  // Pull copies to seller s (already in the cart or not): every copy it can
+  // supply for at most maxExtra more than that copy costs now, then let the
+  // rest settle. maxExtra = Infinity pulls everything it stocks.
+  const pullSeller = (s, maxExtra = Infinity) => {
     if (limitOn && maxSellers && open >= maxSellers && sN[s] === 0) return false;
     let moved = 0;
     for (let u = 0; u < units.length; u++) {
       const cur = assign[u];
       if (cur >= 0 && offers[cur].s === s) continue;
       for (const oi of wantOffers[units[u]]) {
-        if (offers[oi].s !== s) continue;
-        const prev = cur;
-        if (prev >= 0) take(u);
-        if (used[offers[oi].a] < arts[offers[oi].a]) { put(u, oi); moved++; break; }
-        if (prev >= 0) put(u, prev);
+        const o = offers[oi];
+        if (o.s !== s) continue;
+        if (cur >= 0 && o.price - offers[cur].price > maxExtra) break;
+        if (cur >= 0) take(u);
+        if (used[o.a] < arts[o.a]) { put(u, oi); moved++; break; }
+        if (cur >= 0) put(u, cur);
       }
     }
     if (!moved) return false;
@@ -191,27 +233,31 @@ export function optimize(wants, opts = {}) {
 
   const localSearch = (deadline) => {
     let cur = score();
+    const tryMove = (fn) => {
+      const snap = save();
+      if (fn() && score() < cur - EPS) { cur = score(); return true; }
+      load(snap);
+      return false;
+    };
     for (let iter = 0; iter < 100 && now() < deadline; iter++) {
       let improved = false;
       reassignPass(null);
+      if (chainPass(deadline)) reassignPass(null);
       cur = score();
-      // Try closing the sellers with the fewest copies first; those are the
-      // parcels most likely to be worth merging away.
+      // Close sellers with the fewest copies first; those parcels are the
+      // likeliest to be worth merging into others.
       const openList = [];
       for (let s = 0; s < S; s++) if (sN[s] > 0) openList.push(s);
       openList.sort((a, b) => sN[a] - sN[b]);
       for (const s of openList) {
         if (now() > deadline) break;
-        if (sN[s] === 0) continue;
-        const snap = save();
-        if (closeSeller(s) && score() < cur - EPS) { cur = score(); improved = true; } else load(snap);
+        if (sN[s] > 0 && tryMove(() => closeSeller(s))) improved = true;
       }
-      const closed = [];
-      for (let s = 0; s < S; s++) if (sN[s] === 0) closed.push(s);
-      for (const s of closed) {
+      // Pull copies to every seller, in and out of the cart: first only
+      // copies that cost little more there, then everything it stocks.
+      for (let s = 0; s < S; s++) {
         if (now() > deadline) break;
-        const snap = save();
-        if (openSeller(s) && score() < cur - EPS) { cur = score(); improved = true; } else load(snap);
+        if (tryMove(() => pullSeller(s, 0.5)) | tryMove(() => pullSeller(s))) improved = true;
       }
       if (!improved) break;
     }
@@ -254,21 +300,96 @@ export function optimize(wants, opts = {}) {
     }
   };
 
+  // Cheapest copy of every card, ignoring shipping. Searching from here
+  // guarantees the result is never worse than buying cheapest-per-card.
+  const fromCheapest = () => {
+    assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); open = 0;
+    for (let u = 0; u < units.length; u++) {
+      for (const oi of wantOffers[units[u]]) {
+        if (used[offers[oi].a] < arts[offers[oi].a]) { put(u, oi); break; }
+      }
+    }
+  };
+
+  // Shake the best cart so the search can leave its local optimum: drop a
+  // few random sellers, re-pick some random copies, or pull to a random seller.
+  const perturb = () => {
+    const kind = rand();
+    if (kind < 0.45) {
+      const openList = [];
+      for (let s = 0; s < S; s++) if (sN[s] > 0) openList.push(s);
+      const forbid = new Set();
+      const k = 1 + Math.floor(rand() * Math.min(3, openList.length));
+      for (let i = 0; i < k; i++) {
+        const s = openList[Math.floor(rand() * openList.length)];
+        if (sN[s] > 0) { forbid.add(s); const snap = save(); if (!closeSeller(s, forbid)) load(snap); }
+      }
+    } else if (kind < 0.8) {
+      for (let u = 0; u < units.length; u++) {
+        if (rand() > 0.15) continue;
+        const list = wantOffers[units[u]];
+        const pick = list[Math.floor(rand() * Math.min(6, list.length))];
+        if (pick == null || pick === assign[u]) continue;
+        const cur = assign[u];
+        if (cur >= 0) take(u);
+        if (delta(pick, null) < Infinity) put(u, pick); else if (cur >= 0) put(u, cur);
+      }
+    } else if (S) {
+      pullSeller(Math.floor(rand() * S));
+    }
+  };
+
+  // A given solution (the exact solver's) as a start.
+  const fromPicks = () => {
+    assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); open = 0;
+    const left = new Map();
+    opts.warmStart.forEach((list, wi) => (list || []).forEach((p) => left.set(`${wi}|${p.id}`, p.count)));
+    for (let u = 0; u < units.length; u++) {
+      for (const oi of wantOffers[units[u]]) {
+        const k = `${units[u]}|${offers[oi].ref.id}`;
+        if ((left.get(k) || 0) > 0 && used[offers[oi].a] < arts[offers[oi].a]) { left.set(k, left.get(k) - 1); put(u, oi); break; }
+      }
+    }
+  };
+
   const start = now();
   const deadline = start + budget;
   let best = null;
   let bestScore = Infinity;
   let restarts = 0;
-  for (let r = 0; r === 0 || now() < deadline; r++) {
+  const consider = () => {
+    restarts++;
+    const sc = score();
+    if (sc < bestScore - EPS) { bestScore = sc; best = save(); return true; }
+    return false;
+  };
+  // Two deterministic starts always get to finish their search.
+  const inits = [() => construct(0), fromCheapest];
+  if (opts.warmStart) inits.unshift(fromPicks);
+  for (const init of inits) {
     limitOn = false;
-    construct(r === 0 ? 0 : 0.6);
+    init();
     enforceLimit();
     limitOn = true;
-    // The first, deterministic start always gets to finish its search.
-    const sc = localSearch(r === 0 ? start + budget * 3 : deadline);
-    restarts++;
-    if (sc < bestScore - EPS) { bestScore = sc; best = save(); }
-    if (r > 200) break;
+    localSearch(start + budget * 3);
+    consider();
+  }
+  // Then iterated local search from the best cart, with a fresh randomized
+  // start now and then for diversity.
+  // Stops early once many shakes in a row found nothing better.
+  for (let r = 0, stale = 0, sinceBest = 0; now() < deadline && r < 5000 && sinceBest < 300; r++, sinceBest++) {
+    if (stale >= 15) {
+      limitOn = false;
+      construct(0.6);
+      enforceLimit();
+      limitOn = true;
+      stale = 0;
+    } else {
+      load(best);
+      perturb();
+    }
+    localSearch(deadline);
+    if (consider()) { stale = 0; sinceBest = 0; } else stale++;
   }
   load(best);
 
@@ -293,7 +414,14 @@ export function optimize(wants, opts = {}) {
       if (!bySeller.has(o.s)) bySeller.set(o.s, { seller: sellers[o.s].name, info: sellers[o.s].ref, items: new Map(), cards: 0, value: 0 });
       const g = bySeller.get(o.s);
       const k = o.ref.id;
-      if (!g.items.has(k)) g.items.set(k, { offer: o.ref, want: wants[o.w], quantity: 0 });
+      if (!g.items.has(k)) {
+        // The cheapest copy elsewhere, to show what bundling traded away.
+        let cheapest = null;
+        for (const x of wants[o.w].offers || []) {
+          if (x.price > 0 && x.price < o.price - EPS && x.seller !== o.ref.seller && (!cheapest || x.price < cheapest.price)) cheapest = x;
+        }
+        g.items.set(k, { offer: o.ref, want: wants[o.w], quantity: 0, cheapest: cheapest && { price: cheapest.price, seller: cheapest.seller } });
+      }
       g.items.get(k).quantity++;
       g.cards++;
       g.value += o.price;
