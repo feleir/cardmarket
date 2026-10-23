@@ -16,16 +16,19 @@ It runs inside cardmarket.com in your own logged-in browser, including **Chrome 
 
 ## Install
 
-Run `npm install && npm run build`. That produces:
+`npm install && npm run build` produces:
 
-- `dist/bookmarklet.txt`: the whole tool as one `javascript:` URL (~39 KB)
-- `dist/cm-optimizer.user.js`: the userscript (adds a **⚡ Optimize** button)
-- `docs/index.html`: an install page with a **Copy bookmarklet** button. If you turn on GitHub Pages for `/docs`, you can open it on your phone.
+- `dist/loader-bookmarklet.txt`: **the bookmarklet to use**, about 1.3 KB. It downloads `dist/cm-optimizer.js` from the public raw GitHub URL (`config.cmoptUrl` in `package.json`) each time it runs. It keeps a copy on cardmarket.com for when the download fails, and shows a message at the bottom of the page if something goes wrong. It carries no credentials, because it runs inside cardmarket.com's page. That's why the repository has to be public.
+- `dist/bookmarklet.txt`: the whole tool as one `javascript:` URL (~49 KB), for when no public copy is available. It's easy to cut off when copying on a phone, and a cut-off bookmarklet does nothing.
+- `dist/cm-optimizer.user.js`: the userscript (adds a **⚡ Optimize** button).
+- `docs/index.html`: an install page with a **Copy bookmarklet** button.
 
 **Android / Chrome:**
-1. Copy the bookmarklet.
-2. Bookmark any page, then edit that bookmark: name it `cmopt` and paste the code as its URL.
-3. On cardmarket.com (logged in), type `cmopt` in the address bar and tap the bookmark suggestion.
+1. Copy the loader bookmarklet.
+2. Bookmark any page, then edit that bookmark: name it `cmopt` and paste the code as its URL. Check that it starts with `javascript:`.
+3. On cardmarket.com (logged in), type `cmopt` in the address bar and tap the ☆ bookmark suggestion. Starting it from the Bookmarks screen does nothing.
+
+Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. The bookmarklet picks it up within a few minutes, since raw.githubusercontent.com caches for about 5 minutes. If the branch changes (e.g. after merging to `main`), update `config.cmoptUrl`, rebuild, and re-copy the bookmarklet.
 
 ## How to use
 

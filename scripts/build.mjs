@@ -34,16 +34,17 @@ await writeFile('dist/cm-optimizer.js', code + '\n');
 await writeFile('dist/cm-optimizer.user.js', userscript);
 await writeFile('docs/cm-optimizer.user.js', userscript);
 await writeFile('dist/bookmarklet.txt', bookmarklet);
-// The short loader bookmarklet, pointing at a public copy of
-// dist/cm-optimizer.js (set CMOPT_URL to where it is hosted).
-const loaderUrl = process.env.CMOPT_URL || '';
-if (loaderUrl) await writeFile('dist/loader-bookmarklet.txt', loaderBookmarklet(loaderUrl));
+// The short loader bookmarklet, pointing at the public copy of
+// dist/cm-optimizer.js (package.json config.cmoptUrl, or CMOPT_URL).
+const loaderUrl = process.env.CMOPT_URL || pkg.config?.cmoptUrl;
+const loader = loaderBookmarklet(loaderUrl);
+await writeFile('dist/loader-bookmarklet.txt', loader);
 
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const template = await readFile('scripts/install.html', 'utf8');
 await writeFile('docs/index.html', template
   .replaceAll('{{VERSION}}', pkg.version)
-  .replaceAll('{{SIZE}}', `${Math.round(bookmarklet.length / 1024)} KB`)
-  .replaceAll('{{BOOKMARKLET}}', esc(bookmarklet)));
+  .replaceAll('{{SIZE}}', `${(loader.length / 1024).toFixed(1)} KB`)
+  .replaceAll('{{BOOKMARKLET}}', esc(loader)));
 
-console.log(`bookmarklet: ${bookmarklet.length} chars; userscript: ${userscript.length} chars`);
+console.log(`loader: ${loader.length} chars; full bookmarklet: ${bookmarklet.length} chars; userscript: ${userscript.length} chars`);

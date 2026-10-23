@@ -15,5 +15,8 @@
     "esbuild": "^0.24.0",
     "highs": "^1.15.4",
     "linkedom": "^0.18.5"
+  },
+  "config": {
+    "cmoptUrl": "https://raw.githubusercontent.com/feleir/cardmarket/ccr-dccc60d0-bzwg0v/dist/cm-optimizer.js"
   }
 }
