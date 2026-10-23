@@ -9,7 +9,7 @@
 // seller; then iterated local search (shake the best cart, search again)
 // within a time budget. The
 // cheapest-copy-everywhere baseline is reported alongside for comparison.
-import { tierCost, tiersFor } from './shipping.js';
+import { tierCost, sellerTiers } from './shipping.js';
 
 const EPS = 1e-7;
 
@@ -49,7 +49,12 @@ export function optimize(wants, opts = {}) {
       if (!(o.price > 0)) continue;
       if (!sellerIdx.has(o.seller)) {
         sellerIdx.set(o.seller, sellers.length);
-        sellers.push({ name: o.seller, tiers: tiersFor(shipping, o.countryCode), ref: o });
+        sellers.push({ name: o.seller, tiers: sellerTiers(shipping, o), ref: o });
+      } else if (o.trackedOnly && !sellers[sellerIdx.get(o.seller)].ref.trackedOnly) {
+        // Tracked-only is the seller's setting; any offer showing it counts.
+        const sl = sellers[sellerIdx.get(o.seller)];
+        sl.tiers = sellerTiers(shipping, o);
+        sl.ref = o;
       }
       if (!artIdx.has(o.id)) {
         artIdx.set(o.id, arts.length);
@@ -457,13 +462,14 @@ export function baseline(wants, shipping) {
       if (!o) { missing++; continue; }
       used.set(o.id, (used.get(o.id) || 0) + 1);
       items += o.price;
-      const g = per.get(o.seller) || { n: 0, v: 0, cc: o.countryCode };
+      const g = per.get(o.seller) || { n: 0, v: 0, ref: o };
       g.n++; g.v += o.price;
+      if (o.trackedOnly) g.ref = o;
       per.set(o.seller, g);
     }
   }
   let ship = 0;
-  for (const g of per.values()) ship += tierCost(tiersFor(shipping, g.cc), g.n, g.v);
+  for (const g of per.values()) ship += tierCost(sellerTiers(shipping, g.ref), g.n, g.v);
   return { total: round(items + ship), itemsCost: round(items), shippingCost: round(ship), sellers: per.size, missing };
 }
 

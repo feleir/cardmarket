@@ -9,7 +9,7 @@ export class StoppedError extends Error {}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bump when the shape of cached page data changes, so old entries are ignored.
-const CACHE = 'cmopt:c3:';
+const CACHE = 'cmopt:c4:';
 
 export class Fetcher {
   constructor({ delayMs = 1200, cacheMinutes = 30, onWait } = {}) {

@@ -201,3 +201,49 @@ test('seller-page wants filter found through its form and the redirect', async (
     globalThis.fetch = realFetch;
   }
 });
+
+test('seller-page wants filter found through the data-props filter component', async () => {
+  const { discoverWantsFilter } = await import('../src/collect.js');
+  const seller = '/en/Magic/Users/MikoSellerCH/Offers/Singles';
+  // As on the live page: no form, a script component configured in data-props.
+  const props = { action: '/en/Magic/PostGetAction/User_Account_Filter_FilterUserInventory', currencySymbol: '',
+    inputs: [{ name: 'idWantslist', value: '', isMultiSelect: false }, { name: 'sortBy', value: '', isMultiSelect: false }] };
+  const page = doc(`<!doctype html><html><body><input type="hidden" name="__cmtkn" value="tk">
+    <div data-component-name="CategoryOffersFilterComponent" data-props="${JSON.stringify(props).replace(/"/g, '&quot;')}"></div></body></html>`);
+  const posted = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    posted.push([url, [...init.body.entries()]]);
+    return { url: `https://www.cardmarket.com${seller}?idWantslist=21758327` };
+  };
+  try {
+    const found = await discoverWantsFilter({ doc: async () => null }, page, seller, '21758327');
+    assert.equal(found.template, `${seller}?idWantslist=21758327`);
+    assert.equal(posted[0][0], props.action);
+    assert.deepEqual(posted[0][1], [['__cmtkn', 'tk'], ['idWantslist', '21758327'], ['sortBy', '']]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// The price area of the row that could not be read (live debug report): an
+// icon with the price's class comes first, the price excludes 8.1% Swiss VAT,
+// and the seller ships only tracked.
+const LIVE_OFFER_VAT = `<div class="col-offer col-auto"><div class="price-container d-none d-md-flex justify-content-end"><div class="d-flex flex-column"><div class="d-flex align-items-center justify-content-end"><span title="Only &lt;strong&gt;tracked shipping&lt;/strong&gt; to Switzerland." data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="fonticon-check-circle extra-small color-primary me-2 me-md-1"></span><span class="color-primary small text-end text-nowrap fw-bold ">0,84 €</span><sup title="You have to pay an additional 8.1% VAT. The final amount will be shown in your shopping cart." data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="bottom" class="vatWarning">&nbsp;1</sup></div></div></div><div class="amount-container d-none d-md-flex justify-content-end me-3"><span class="item-count small text-end">2</span></div></div>`;
+
+test('live row with tracked-only shipping and VAT note', () => {
+  const row = LIVE_ROW.replace(/<div class="col-offer col-auto">[\s\S]*$/, `${LIVE_OFFER_VAT}</div>`);
+  const [o] = parseOffers(doc(productPage({ title: 'X', expansion: 'Y', rows: [row] })), '/en/Magic/Products/Singles/Y/X');
+  assert.equal(o.listedPrice, 0.84);
+  assert.equal(o.vat, 8.1);
+  assert.equal(o.price, 0.91);
+  assert.equal(o.trackedOnly, true);
+  assert.equal(o.available, 2);
+});
+
+test('tracked-only sellers are charged the tracked rate', async () => {
+  const { sellerTiers, tierCost } = await import('../src/shipping.js');
+  const { DEFAULT_SHIPPING } = await import('../src/constants.js');
+  assert.equal(tierCost(sellerTiers(DEFAULT_SHIPPING, { countryCode: 'CH' }), 1, 1), 1.83);
+  assert.equal(tierCost(sellerTiers(DEFAULT_SHIPPING, { countryCode: 'CH', trackedOnly: true }), 1, 1), 8.5);
+});

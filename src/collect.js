@@ -275,6 +275,37 @@ export async function discoverWantsFilter(fetcher, doc, sellerUrl, listId) {
     const url = `${sellerUrl}?${param}=${id}`;
     if (await confirm(url)) return { template: url };
   }
+  // Cardmarket's filters are script components configured in data-props,
+  // e.g. CategoryOffersFilterComponent with
+  //   { action: '/en/Magic/PostGetAction/User_Account_Filter_FilterUserInventory',
+  //     inputs: [{ name: 'idWantslist', value: '' }, { name: 'sortBy', ... }, ...] }
+  // Submit it as the component would (all its inputs, the wants list set);
+  // the address it redirects to is the filtered page.
+  for (const el of doc.querySelectorAll('[data-component-name][data-props]')) {
+    let props;
+    try { props = JSON.parse(el.getAttribute('data-props')); } catch { continue; }
+    const inputs = Array.isArray(props?.inputs) ? props.inputs : [];
+    const wantsInput = inputs.find((i) => /wants/i.test(i?.name || ''));
+    if (!wantsInput || !props.action) continue;
+    const token = doc.querySelector('input[name="__cmtkn"]')?.getAttribute('value');
+    try {
+      const body = new FormData();
+      if (token) body.append('__cmtkn', token);
+      for (const i of inputs) {
+        if (!i?.name) continue;
+        const v = i === wantsInput ? id : i.value ?? '';
+        (Array.isArray(v) ? v : [v]).forEach((x) => body.append(i.isMultiSelect ? `${i.name}[]` : i.name, x == null ? '' : String(x)));
+      }
+      const r = await fetch(props.action, { method: 'POST', body, credentials: 'include' });
+      const url = r.url.replace(/^https?:\/\/[^/]+/, '');
+      if (url.includes(id)) return { template: url.replace(/[?&]site=\d+/, ''), via: el.getAttribute('data-component-name') };
+    } catch { /* fall back to the plain parameter */ }
+    // The same parameter as a plain address, accepted if it changes the offers.
+    const url = `${sellerUrl}?${wantsInput.name}=${id}`;
+    const filtered = await fetcher.doc(url);
+    const ids = (d) => [...(d?.querySelectorAll('.article-row') || [])].map((r) => r.id).join();
+    if (filtered && ids(filtered) !== ids(doc)) return { template: url, via: `${wantsInput.name} parameter` };
+  }
   const carriers = [...doc.querySelectorAll('input, option, button, a[href]')].filter((el) =>
     el.getAttribute('value') === id || (el.tagName === 'A' && new RegExp(`[?&][^=]+=${id}(&|$)`).test(el.getAttribute('href') || '')));
   for (const el of carriers) {
@@ -332,7 +363,7 @@ function sellerPageDiag(doc, url, listId) {
     mentionsList: doc.body?.innerHTML.includes(String(listId)) || false,
     // Every element whose attributes mention the list id, with its form.
     carriers: [...doc.querySelectorAll('*')].filter((el) => [...el.attributes].some((a) => a.value.includes(String(listId)))).slice(0, 6).map((el) => ({
-      el: el.outerHTML.replace(/\s+/g, ' ').slice(0, 400),
+      el: el.outerHTML.replace(/\s+/g, ' ').slice(0, 2500),
       form: el.closest('form') ? el.closest('form').outerHTML.replace(/\s+/g, ' ').slice(0, 1500) : null,
     })),
   };

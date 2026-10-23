@@ -12,7 +12,7 @@
 //        Σ_{o∈s} x_o     <= Σ_t maxCards_t z_{s,t}
 //        Σ_{o∈s} p_o x_o <= Σ_t maxValue_t z_{s,t}
 //        Σ_t z_{s,t} <= 1
-import { tiersFor } from './shipping.js';
+import { sellerTiers } from './shipping.js';
 
 const BIG = 10000;
 export const HIGHS_VERSION = '1.15.4';
@@ -25,7 +25,8 @@ export function buildModel(wants, { shipping, sellerPenalty = 0 } = {}) {
     if (!(o.price > 0)) return;
     const v = `x${vars.length}`;
     vars.push({ v, wi, oi, o });
-    if (!sellers.has(o.seller)) sellers.set(o.seller, { idx: sellers.size, tiers: tiersFor(shipping, o.countryCode), xs: [] });
+    if (!sellers.has(o.seller)) sellers.set(o.seller, { idx: sellers.size, tiers: sellerTiers(shipping, o), xs: [] });
+    else if (o.trackedOnly) sellers.get(o.seller).tiers = sellerTiers(shipping, o);
     sellers.get(o.seller).xs.push({ v, p: o.price });
     if (!articles.has(o.id)) articles.set(o.id, { cap: Math.max(1, o.available | 0), vs: [] });
     articles.get(o.id).vs.push(v);

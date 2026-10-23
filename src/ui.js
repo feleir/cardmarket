@@ -269,12 +269,12 @@ export function mount() {
       <div class="card">
         <div class="row" style="align-items:center">
           <div><b><a href="${esc(g.info.sellerUrl)}" target="_blank" rel="noopener">${esc(g.seller)}</a></b>
-            <div class="muted">${esc(g.info.countryName)} · ${'★'.repeat(g.info.rating) || 'new'} · ${g.cards} card(s)</div></div>
+            <div class="muted">${esc(g.info.countryName)} · ${'★'.repeat(g.info.rating) || 'new'} · ${g.cards} card(s)${g.info.trackedOnly ? ' · ships tracked only' : ''}</div></div>
           <div style="text-align:right"><b>${money(g.value + g.shipping)}</b><div class="muted">${money(g.value)} + ~${money(g.shipping)}</div></div>
         </div>
         ${g.items.map((it, ii) => `<div class="item">
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
-            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
+            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.vat ? ` · incl. ${it.offer.vat}% VAT` : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
             ${it.cheapest ? `<div class="muted">Cheapest: ${money(it.cheapest.price)} at ${esc(it.cheapest.seller)} — bundled here, cheaper with shipping</div>` : ''}</div>
           <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
@@ -380,7 +380,7 @@ export function mount() {
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
       unreadOffer: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unreadOffer,
       log: st.log.slice(-40),
-      cart: cartLog.slice(-12),
+      cart: cartLog.slice(-14),
       siteCart: st.cartMsg && !st.cartMsg.ok ? siteCartCode() : undefined,
       sellerScan: st.scanDiag,
     }, null, 1);

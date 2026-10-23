@@ -187,8 +187,18 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
     const expansion = flat(tipOf(expEl)) || expansionFromUrl(productLink?.getAttribute('href')) || (seller ? '' : pageExpansion);
     const name = seller ? flat(productLink?.textContent) : pageName;
 
-    const priceEl = row.querySelector('.price-container .color-primary') || row.querySelector('.color-primary');
-    const price = parsePrice(priceEl?.textContent);
+    // The price is the first .color-primary that holds digits: a row can
+    // open with an icon carrying the same class (the "only tracked shipping"
+    // check mark), which an earlier version read as the price.
+    const priceBox = row.querySelector('.price-container') || row;
+    const priceEl = [...priceBox.querySelectorAll('.color-primary')].find((e) => /\d/.test(e.textContent));
+    const listed = parsePrice(priceEl?.textContent);
+    // Professional sellers' prices to Switzerland exclude VAT, shown as a
+    // note ("You have to pay an additional 8.1% VAT"); count it in.
+    const vatNote = tipsIn(priceBox).map(tipOf).find((t) => /VAT/i.test(t)) || '';
+    const vat = Number((vatNote.match(/(\d+(?:[.,]\d+)?)\s*%/) || [])[1]?.replace(',', '.')) || 0;
+    const price = Math.round(listed * (1 + vat / 100) * 100) / 100;
+    const trackedOnly = tipsIn(priceBox).some((e) => /only.*tracked shipping/i.test(tipOf(e).replace(/<[^>]+>/g, '')));
     if (!(price > 0)) continue;
     const available = parseInt(flat(row.querySelector('.amount-container .item-count')?.textContent), 10) || 1;
 
@@ -208,7 +218,7 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
       rating, sales,
       condition, language, isFoil, isSigned, isAltered,
       expansion, productUrl, name,
-      price, available, comment, cartForm, cartModal,
+      price, listedPrice: listed, vat, trackedOnly, available, comment, cartForm, cartModal,
       pageUrl: pageUrl.replace(/^https?:\/\/[^/]+/, ''), // where the row (and its cart button) is
     });
   }

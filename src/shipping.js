@@ -25,3 +25,14 @@ export function parseTiers(text) {
 }
 
 export const formatTiers = (tiers) => tiers.map((t) => `${t.maxCards} ${t.maxValue} ${t.price}`).join('\n');
+
+// Cardmarket requires tracked shipping above 25 EUR, so tiers allowing more
+// value than that are the tracked ones. A seller who ships only tracked
+// (marked on its offers) can use only those.
+export const TRACKED_ABOVE = 25;
+export function sellerTiers(shipping, offer) {
+  const tiers = tiersFor(shipping, offer.countryCode);
+  if (!offer.trackedOnly) return tiers;
+  const tracked = tiers.filter((t) => t.maxValue > TRACKED_ABOVE);
+  return tracked.length ? tracked : tiers;
+}

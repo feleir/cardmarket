@@ -20,7 +20,21 @@ const note = (entry) => { cartLog.push({ at: new Date().toISOString(), ...entry 
 export async function cartArticleIds() {
   const r = await fetch(`/en/${game()}/ShoppingCart`, { credentials: 'include' });
   const html = await r.text();
-  return new Set(html.match(/\d+/g) || []);
+  const ids = new Set(html.match(/\d+/g) || []);
+  ids.html = html;
+  return ids;
+}
+
+// For items the cart check did not find: does the cart page mention the
+// card at all (added under another id?), and what is around it.
+function cartEvidence(html, items) {
+  const text = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/\s+/g, ' ');
+  return items.slice(0, 8).map((it) => {
+    const name = it.want?.name || it.offer.name || '';
+    const at = name ? text.indexOf(name) : -1;
+    return { article: it.offer.id, name, seller: it.offer.seller, amount: it.quantity,
+      nameInCart: at >= 0, around: at >= 0 ? text.slice(Math.max(0, at - 400), at + 300) : undefined };
+  });
 }
 
 const pageOf = (it) => it.offer.pageUrl
@@ -63,8 +77,12 @@ function watch(win) {
     if (typeof show === 'function') {
       R.showResultMessage = function (res, ...rest) {
         try {
-          const text = res && (res.message || res.messages || res.resultMessage || res.text);
-          w.messages.push(String(typeof text === 'object' ? JSON.stringify(text) : text || '').slice(0, 200));
+          // Keep what the response object holds; its field names are not known.
+          const seen = new WeakSet();
+          w.messages.push(JSON.stringify(res, (k, v) => {
+            if (v && typeof v === 'object') { if (seen.has(v) || v.nodeType) return undefined; seen.add(v); }
+            return typeof v === 'function' ? undefined : v;
+          }).slice(0, 400));
         } catch { /* ignore */ }
         return show.call(this, res, ...rest);
       };
@@ -149,7 +167,7 @@ export async function addAll(items, onEach) {
   }
   const added = items.filter((it) => inCart.has(it.offer.id));
   const failed = items.filter((it) => !inCart.has(it.offer.id));
-  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id) });
+  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), ...(failed.length ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
   for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : 'failed');
   return { added, failed };
 }
