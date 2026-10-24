@@ -123,3 +123,22 @@ test('explains what taking the cheaper copies elsewhere would cost', async () =>
     { moved: 2, seller: 'A', cards: 0.2, there: 6.67, here: 0, delta: 6.47 },
   );
 });
+
+test('printing preference: another printing must save more than the premium', () => {
+  const flat = { default: [{ maxCards: 1000, maxValue: 1e6, price: 0 }] };
+  const want = (otherPrice) => [{ key: 'a', quantity: 1, offers: [
+    { id: 'orig', seller: 'A', price: 1.0, available: 1 },
+    { id: 'other', seller: 'B', price: otherPrice, available: 1, otherPrinting: true }] }];
+  const pick = (r) => r.groups[0].items[0].offer.id;
+  // Saves 0,30 < 0,50: keep the printing on the list.
+  let r = optimize(want(0.7), { shipping: flat, printingPremium: 0.5, timeBudgetMs: 20 });
+  assert.equal(pick(r), 'orig');
+  assert.equal(r.total, 1);
+  // Saves 0,60 > 0,50: take the other printing; the total is the real price.
+  r = optimize(want(0.4), { shipping: flat, printingPremium: 0.5, timeBudgetMs: 20 });
+  assert.equal(pick(r), 'other');
+  assert.equal(r.total, 0.4);
+  // No preference: plain cheapest.
+  r = optimize(want(0.7), { shipping: flat, printingPremium: 0, timeBudgetMs: 20 });
+  assert.equal(pick(r), 'other');
+});

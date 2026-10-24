@@ -179,6 +179,13 @@ export async function collectOffers(fetcher, wants, settings, progress) {
       if (why) diag.rejected[why] = (diag.rejected[why] || 0) + 1;
       return !why;
     });
+    // With "any printing", mark copies of other printings than the one the
+    // wants list names, for the optimizer's printing preference.
+    if (want.anyPrinting) {
+      const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const own = cleanPath(want.url);
+      for (const o of found) o.otherPrinting = cleanPath(o.productUrl) !== own && norm(o.expansion) !== norm(want.expansion);
+    }
     want.offers = found;
     want.diag = diag;
     want.truncated = truncated;

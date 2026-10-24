@@ -93,6 +93,7 @@ export const DEFAULT_SETTINGS = {
   minCondition: 0,        // 0 = use what each want says
   foil: 'want',           // 'want' | 'Y' | 'N' | 'any'
   anyPrinting: false,     // treat wants for one printing as "any printing"
+  printingPremium: 0.5,   // with anyPrinting: another printing must save more than this per copy
   minRating: 0,           // 0..5, see RATINGS
   allowUnrated: true,
   sellerTypes: [],        // [] = all; 0 private, 1 professional, 2 powerseller

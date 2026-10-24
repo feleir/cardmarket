@@ -6,7 +6,8 @@
 //   x_o      copies bought from offer o            0..available
 //   m_w      copies of want w left unfilled        (heavily penalised)
 //   z_{s,t}  seller s ships with tier t            binary, at most one per seller
-//   min  Σ p_o x_o + Σ (tierPrice_t + penalty) z_{s,t} + BIG Σ m_w
+//   min  Σ (p_o + pref_o) x_o + Σ (tierPrice_t + penalty) z_{s,t} + BIG Σ m_w
+//        (pref_o: the printing premium for copies of another printing)
 //   s.t. Σ_{o∈w} x_o + m_w = quantity_w
 //        Σ_{o: same article} x_o <= available          (an article can serve two wants)
 //        Σ_{o∈s} x_o     <= Σ_t maxCards_t z_{s,t}
@@ -17,7 +18,7 @@ import { sellerTiers } from './shipping.js';
 const BIG = 10000;
 export const HIGHS_VERSION = '1.15.4';
 
-export function buildModel(wants, { shipping, sellerPenalty = 0 } = {}) {
+export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium = 0 } = {}) {
   const vars = [];
   const sellers = new Map();
   const articles = new Map();
@@ -37,7 +38,7 @@ export function buildModel(wants, { shipping, sellerPenalty = 0 } = {}) {
   const ints = [];
   const bins = [];
   for (const { v, o } of vars) {
-    obj.push(`${o.price} ${v}`);
+    obj.push(`${o.price + (o.otherPrinting ? Number(printingPremium) || 0 : 0)} ${v}`);
     bounds.push(` 0 <= ${v} <= ${Math.max(1, o.available | 0)}`);
     ints.push(v);
   }

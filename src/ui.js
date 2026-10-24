@@ -176,6 +176,9 @@ export function mount() {
         </select></div>
       </div>
       <label><input type="checkbox" data-k="anyPrinting" ${s.anyPrinting ? 'checked' : ''}> Any printing: ignore the expansion in the wants list and also look at every other printing of each card</label>
+      ${s.anyPrinting ? `<label>Prefer the printing on the wants list unless another saves more than (€ per copy)</label>
+        <input type="number" min="0" step="0.1" data-k="printingPremium" value="${s.printingPremium}">
+        <p class="muted">0 = no preference, just the cheapest. Prices and totals stay real; this only steers the choice.</p>` : ''}
       <details><summary>Printings / expansions</summary>
         <label>For "any printing" wants, check at most this many printings</label>
         <input type="number" min="1" max="60" data-k="maxVersions" value="${s.maxVersions}">
@@ -247,6 +250,7 @@ export function mount() {
     if (!w.inCart) parts.push(`new parcel from ${esc(w.seller)} ${money(w.shippingThere)}`);
     else if (w.shippingThere > 0.005) parts.push(`${esc(w.seller)}'s parcel goes up a shipping step +${money(w.shippingThere)}`);
     if (w.shippingHere < -0.005) parts.push(`this parcel gets ${money(-w.shippingHere)} cheaper`);
+    if (Math.abs(w.preference || 0) > 0.005) parts.push(`printing preference ${w.preference > 0 ? '+' : ''}${money(w.preference)}`);
     const head = `Cheaper: ${money(w.price)} at ${esc(w.seller)}. Taking ${n} there: ${parts.join(', ')}`;
     if (w.delta < -0.005) {
       return `<div class="warn">${head} = saves ${money(-w.delta)}${w.overCap ? ', but that would exceed your max sellers' : ' (missed saving)'}.</div>`;
@@ -295,7 +299,7 @@ export function mount() {
         </div>
         ${g.items.map((it, ii) => `<div class="item">
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
-            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.vat ? ` · incl. ${it.offer.vat}% VAT` : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
+            <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.otherPrinting ? ` · <b>other printing</b> (list: ${esc(it.want.expansion)})` : ''}${it.offer.vat ? ` · incl. ${it.offer.vat}% VAT` : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
             ${switchNote(it)}</div>
           <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
@@ -444,7 +448,8 @@ export function mount() {
 
   const optOptions = () => {
     const s = st.settings;
-    return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs };
+    return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
+      printingPremium: s.anyPrinting ? s.printingPremium : 0 };
   };
 
   async function reoptimize() {
@@ -597,7 +602,7 @@ export function mount() {
     if (!k || k === 'countryFilter') return;
     if (k === 'list') { st.listUrl = t.value; st.wants = null; st.result = null; render(); return; }
     if (k === 'sellerTypes') { update({ sellerTypes: t.value ? t.value.split(',').map(Number) : [] }); return; }
-    if (t.type === 'checkbox') update({ [k]: t.checked });
+    if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting') render(); }
     else if (t.type === 'number' || ['minCondition', 'minRating'].includes(k)) update({ [k]: Number(t.value) || 0 });
     else update({ [k]: t.value });
   });

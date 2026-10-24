@@ -265,13 +265,13 @@ test('any printing: a want for one printing also gets offers for its other print
     cached: (u) => mem.get(u), store: (u, v) => mem.set(u, v),
     doc: async (u) => { fetched.push(u); const html = pages[u.split('?')[0]]; return html ? doc(html) : null; },
   };
-  const want = { idWant: '1', kind: 'product', name: 'Aquamoeba', url: `${P}/Torment/Aquamoeba?sellerCountry=4`, quantity: 4, languages: [], minCondition: 5, flags: {} };
+  const want = { idWant: '1', kind: 'product', name: 'Aquamoeba', url: `${P}/Torment/Aquamoeba?sellerCountry=4`, expansion: 'Torment', quantity: 4, languages: [], minCondition: 5, flags: {} };
 
   await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: false });
   assert.deepEqual(want.offers.map((o) => o.id), ['1']);
 
   await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: true });
-  assert.deepEqual(want.offers.map((o) => [o.id, o.expansion]), [['1', 'Torment'], ['2', 'Dominaria Remastered']]);
+  assert.deepEqual(want.offers.map((o) => [o.id, o.expansion, o.otherPrinting]), [['1', 'Torment', false], ['2', 'Dominaria Remastered', true]]);
   assert.ok(fetched.some((u) => u.startsWith('/en/Magic/Cards/Aquamoeba?sellerCountry=4')));
   // A seller-scan offer of another printing now matches too.
   assert.equal(matchWants({ productUrl: `${P}/Dominaria-Remastered/Aquamoeba`, name: 'Aquamoeba' }, [want]).length, 1);

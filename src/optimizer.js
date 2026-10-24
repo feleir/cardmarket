@@ -27,7 +27,7 @@ function mulberry32(seed) {
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // wants: [{ key, name, quantity, offers: [{ id, seller, countryCode, price, available, ... }] }]
-// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed,
+// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed, printingPremium,
 //         warmStart: picks[wantIndex] = [{ id, count }] e.g. from the exact solver }
 export function optimize(wants, opts = {}) {
   const shipping = opts.shipping || {};
@@ -35,6 +35,11 @@ export function optimize(wants, opts = {}) {
   const maxSellers = Number(opts.maxSellers) || 0;
   const budget = opts.timeBudgetMs ?? 2000;
   const rand = mulberry32(opts.seed ?? 12345);
+  // Preference for the printing the wants list names: a copy of another
+  // printing (offer.otherPrinting) counts this much more per copy when
+  // choosing. Totals and parcel values still use real prices.
+  const premium = Number(opts.printingPremium) || 0;
+  const costOf = (o) => o.price + (o.otherPrinting ? premium : 0);
 
   // Flatten into indexed arrays so the hot loops avoid object lookups.
   const sellerIdx = new Map();
@@ -61,9 +66,9 @@ export function optimize(wants, opts = {}) {
         arts.push(Math.max(1, o.available | 0));
       }
       list.push(offers.length);
-      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), price: o.price, ref: o, w: wi });
+      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), price: o.price, cost: costOf(o), ref: o, w: wi });
     }
-    list.sort((x, y) => offers[x].price - offers[y].price);
+    list.sort((x, y) => offers[x].cost - offers[y].cost);
     wantOffers[wi] = list;
   });
   const units = [];
@@ -109,7 +114,7 @@ export function optimize(wants, opts = {}) {
       if (forbid && forbid.has(o.s)) return Infinity;
       if (limitOn && maxSellers && open >= maxSellers) return Infinity;
     }
-    return o.price + ship(o.s, n + 1, sV[o.s] + o.price) - ship(o.s, n, sV[o.s]);
+    return o.cost + ship(o.s, n + 1, sV[o.s] + o.price) - ship(o.s, n, sV[o.s]);
   };
   const bestFor = (u, forbid, noise = 0) => {
     let best = -1;
@@ -125,7 +130,7 @@ export function optimize(wants, opts = {}) {
 
   const total = () => {
     let t = 0;
-    for (let u = 0; u < units.length; u++) if (assign[u] >= 0) t += offers[assign[u]].price;
+    for (let u = 0; u < units.length; u++) if (assign[u] >= 0) t += offers[assign[u]].cost;
     for (let s = 0; s < S; s++) t += ship(s, sN[s], sV[s]);
     return t;
   };
@@ -454,10 +459,11 @@ export function optimize(wants, opts = {}) {
       if (m <= 0) continue;
       const here = ship(o.s, sN[o.s] - m, sV[o.s] - m * o.price) - ship(o.s, sN[o.s], sV[o.s]);
       const there = ship(x.s, sN[x.s] + m, sV[x.s] + m * x.price) - ship(x.s, sN[x.s], sV[x.s]);
-      const d = m * (x.price - o.price) + here + there;
+      const d = m * (x.cost - o.cost) + here + there;
       if (!best || d < best.delta) {
         best = { delta: round(d), moved: m, seller: sellers[x.s].name, price: x.price, inCart: sN[x.s] > 0,
           cardsSaved: round(m * (o.price - x.price)), shippingThere: round(there), shippingHere: round(here),
+          preference: round(m * ((x.cost - x.price) - (o.cost - o.price))),
           overCap: !!maxSellers && sN[x.s] === 0 && sN[o.s] > m && open >= maxSellers };
       }
     }

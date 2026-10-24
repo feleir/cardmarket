@@ -37,6 +37,7 @@ Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. T
    - Tap the seller countries you allow.
    - Optionally override language, minimum condition and foil. Otherwise each want's own settings are used.
    - **Any printing**: ignore the expansion a want names and also consider every other printing of the card, read from the card's all-printings page. Non-tournament printings in the block list stay excluded.
+     With it on, **prefer the printing on the wants list unless another saves more than X € per copy** (default 0,50 €; 0 = plain cheapest). When choosing, the optimizer counts each copy of another printing X € dearer. Totals and the cart use real prices. Items from another printing are labelled.
    - Set the minimum seller rating, seller type and sellers to block.
    - **Max sellers**, **Extra cost per seller**: trade money for fewer parcels.
    - **Printings**: for "any printing" wants, how many printings to check (cheapest first), and expansions to never buy from. Defaults include World Championship Decks and Collectors' Edition, which aren't tournament-legal.

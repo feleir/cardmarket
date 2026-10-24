@@ -48,3 +48,15 @@ test('exact model handles shared articles and unfillable copies', async () => {
   assert.equal(r.missing.reduce((n, m) => n + m.count, 0), 1);
   assert.equal(r.total, 1 + 2 + 5 + 2); // X + Z from S, Y from T, two parcels
 });
+
+test('exact model applies the printing preference too', async () => {
+  const h = await highs();
+  const flat = { default: [{ maxCards: 1000, maxValue: 1e6, price: 0 }] };
+  const wants = [{ key: 'a', quantity: 1, offers: [
+    { id: 'orig', seller: 'A', price: 1.0, available: 1 },
+    { id: 'other', seller: 'B', price: 0.7, available: 1, otherPrinting: true }] }];
+  const ex = solveWith(h, wants, { shipping: flat, printingPremium: 0.5 });
+  assert.deepEqual(ex.picks[0], [{ id: 'orig', count: 1 }]);
+  const ex0 = solveWith(h, wants, { shipping: flat, printingPremium: 0 });
+  assert.deepEqual(ex0.picks[0], [{ id: 'other', count: 1 }]);
+});
