@@ -271,8 +271,13 @@ await scenario('decklist', {
   const sel = page.locator('#cmopt-root select[data-printing]');
   if ((await sel.count()) !== 1) fail(`expected a printing choice for Lightning Bolt only, got ${await sel.count()}`);
   else {
+    // Each choice with its change to the total: Magic 2010 has only 5 copies
+    // (3 zurich_cards, 2 geneva_tcg), which is already this cart.
+    await page.waitForFunction(() => /±0,00 €/.test([...document.querySelector('#cmopt-root').shadowRoot.querySelector('select[data-printing]').options].map((o) => o.textContent).join()), null, { timeout: 30000 }).catch(() => {});
     const choices = await sel.evaluate((el) => [...el.options].map((o) => o.textContent).join(' | '));
+    console.log('--- printing choices ---\n' + choices);
     if (!/Alpha · from 150,00 € · 1 copy \(not enough\)/.test(choices)) fail(`printing choices: ${choices}`);
+    if (!/Magic 2010 · from 0,60 € · 5 copies · ±0,00 €/.test(choices)) fail(`printing choices without the change in total: ${choices}`);
     await page.locator('#cmopt-root summary:has-text("Printings")').dispatchEvent('click'); // closed: nothing mixed in this cart
     await sel.selectOption('p:alpha');
     await page.waitForFunction(() => !/Re-planning/.test(document.querySelector('#cmopt-root').shadowRoot.querySelector('main').innerText), null, { timeout: 30000 });

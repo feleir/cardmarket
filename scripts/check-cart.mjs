@@ -10,16 +10,16 @@ import { highs } from '../test/exact.js';
 const data = JSON.parse(await readFile(process.argv[2], 'utf8'));
 if (data.tool !== 'cmopt-cart2') throw new Error('expected a cmopt-cart2 blob');
 const shipping = { CH: data.shipping.CH, default: data.shipping.default };
-const wants = data.wants.map(([name, quantity, rows], wi) => ({
+const wants = data.wants.map(([name, quantity, rows, printings = []], wi) => ({
   key: `w${wi}`, name, quantity,
-  offers: rows.map(([s, price, available], i) => {
+  offers: rows.map(([s, price, available, , printing], i) => {
     const [seller, countryCode, trackedOnly, vat = 0] = data.sellers[s];
     // Prices include the VAT; the shipping steps use the price before it.
     const listedPrice = vat ? Math.round((price / (1 + vat / 100)) * 100) / 100 : undefined;
-    return { id: `${wi}:${i}`, seller, countryCode, trackedOnly: !!trackedOnly, vat, listedPrice, price, available };
+    return { id: `${wi}:${i}`, seller, countryCode, trackedOnly: !!trackedOnly, vat, listedPrice, price, available, expansion: printings[printing] };
   }),
 }));
-const opts = { shipping, sellerPenalty: data.shipping.penalty || 0, maxSellers: data.shipping.maxSellers || 0 };
+const opts = { shipping, sellerPenalty: data.shipping.penalty || 0, maxSellers: data.shipping.maxSellers || 0, mixPenalty: data.mix || 0 };
 
 const heur = optimize(wants, { ...opts, timeBudgetMs: 3000 });
 console.log(`app (as pasted): ${data.total}   heuristic here: ${heur.total}   cheapest-per-card: ${heur.baseline.total}`);

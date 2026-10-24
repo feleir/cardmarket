@@ -115,6 +115,8 @@ export function mount() {
     optionsBusy: false,
     optionsRun: 0,
     replanning: false,
+    printCost: new Map(), // "card#|choice" -> change in the total vs. the cart shown (null: cannot supply)
+    printRun: 0,
     cartMsg: null,
     adding: false,
   };
@@ -376,6 +378,65 @@ export function mount() {
     return [...by.values()].sort((a, b) => a.from - b.from);
   }
 
+  // A printing choice's text, with how the total would change when known.
+  function choiceLabel(w, i, choice, p) {
+    const base = !choice ? (st.settings.samePrinting ? 'As in Setup (one printing unless mixing saves enough)' : 'As in Setup (cheapest, may mix)')
+      : choice === 'mix' ? 'Cheapest, printings may mix' : choice === 'same' ? 'One printing, whichever is cheapest'
+      : `${p.name} · from ${money(p.from)} · ${p.copies} cop${p.copies === 1 ? 'y' : 'ies'}`;
+    if (p && p.copies < w.quantity) return `${base} (not enough)`;
+    if (!st.printCost.has(`${i}|${choice}`)) return base;
+    const d = st.printCost.get(`${i}|${choice}`);
+    if (d == null) return `${base} · can't supply all`;
+    return `${base} · ${Math.abs(d) < 0.005 ? '±0,00 €' : `${d > 0 ? '+' : '−'}${money(Math.abs(d))}`}`;
+  }
+
+  // For every printing choice of every card: the total of a cart with that
+  // choice, re-planned briefly from the cart shown. In the background, mixed
+  // cards first; each finished card updates its menu in place.
+  async function findPrintCosts() {
+    const run = ++st.printRun;
+    st.printCost = new Map();
+    const base = st.result;
+    if (!base || !st.wants) return;
+    const all = solveWants();
+    const idx = new Map(all.map((w, k) => [w.idWant || w.name, k]));
+    // The cart shown, as a warm start: picks[want] = [{ id, count }].
+    const picks = all.map(() => []);
+    for (const g of base.groups) for (const it of g.items) {
+      const k = idx.get(it.want.idWant || it.want.name);
+      if (k != null) picks[k].push({ id: it.offer.id, count: it.quantity });
+    }
+    const opts = { ...optOptions(), timeBudgetMs: 150 };
+    const missingOf = (r) => r.missing.reduce((n, m) => n + m.count, 0);
+    const need = missingOf(base);
+    const cards = st.wants.map((w, i) => ({ w, i, k: idx.get(w.idWant || w.name), ps: printingsOf(w) }))
+      .filter((x) => x.k != null && x.ps.length > 1)
+      .sort((a, b) => (base.mixed || []).some((m) => m.name === b.w.name) - (base.mixed || []).some((m) => m.name === a.w.name));
+    for (const { w, i, k, ps } of cards) {
+      const choices = [...(w.printingChoice ? [''] : []), 'mix', 'same', ...ps.filter((p) => p.copies >= w.quantity).map((p) => `p:${p.key}`)];
+      for (const c of choices) {
+        await new Promise((r) => setTimeout(r, 0));
+        if (run !== st.printRun) return;
+        const wants = all.map((x, j) => {
+          if (j !== k) return x;
+          if (c === '') return w;
+          if (c === 'mix') return { ...x, mixPenalty: 0 };
+          if (c === 'same') return { ...x, mixPenalty: 1000 };
+          return { ...x, offers: w.offers.filter((o) => printingOf(o) === c.slice(2)) };
+        });
+        const warm = picks.map((l, j) => (j === k ? [] : l));
+        const r = optimize(wants, { ...opts, warmStart: warm });
+        st.printCost.set(`${i}|${c}`, missingOf(r) > need ? null : Math.round((r.total - base.total) * 100) / 100);
+      }
+      // Update this card's menu without re-rendering (an open menu stays open).
+      const sel = shadow.querySelector(`select[data-printing="${i}"]`);
+      if (sel) for (const o of sel.options) {
+        const p = o.value.startsWith('p:') ? ps.find((x) => `p:${x.key}` === o.value) : null;
+        o.textContent = choiceLabel(w, i, o.value, p);
+      }
+    }
+  }
+
   function viewPrintings() {
     const r = st.result;
     const keyOf = (w) => w.idWant || w.name;
@@ -392,19 +453,18 @@ export function mount() {
     if (!cards.length) return '';
     const mixedN = cards.filter((x) => x.got.size > 1).length;
     cards.sort((a, b) => (b.got.size > 1) - (a.got.size > 1) || !!b.w.printingChoice - !!a.w.printingChoice);
-    const setup = st.settings.samePrinting ? 'As in Setup (one printing unless mixing saves enough)' : 'As in Setup (cheapest, may mix)';
     return `<details class="card" ${mixedN || cards.some((x) => x.w.printingChoice) ? 'open' : ''}>
       <summary><b>Printings</b> · ${cards.length} card(s) on offer in several printings${mixedN ? `, <span class="warn">${mixedN} mixed in this cart</span>` : ''}</summary>
-      <p class="muted">Per card: the cheapest mix, one printing (whichever makes the cart cheapest), or a printing you choose. The cart is re-planned from the offers already loaded.</p>
+      <p class="muted">Per card: the cheapest mix, one printing (whichever makes the cart cheapest), or a printing you choose. Each choice shows about how the total would change from this cart, shipping included. Choosing re-plans the cart from the offers already loaded.</p>
       ${st.replanning ? '<p class="muted">Re-planning…</p>' : ''}
       ${cards.map(({ w, i, ps, got }) => `<div class="item"><div class="t">
         <b>${w.quantity}× ${esc(w.name)}</b>${got.size > 1 ? ' <span class="warn">mixed</span>' : ''}
         <div class="muted">In this cart: ${got.size ? [...got].map(([n, k]) => `${k}× ${esc(n)}`).join(', ') : 'none'}</div>
         <select data-printing="${i}" ${st.replanning ? 'disabled' : ''}>
-          <option value="">${setup}</option>
-          <option value="mix" ${w.printingChoice === 'mix' ? 'selected' : ''}>Cheapest, printings may mix</option>
-          <option value="same" ${w.printingChoice === 'same' ? 'selected' : ''}>One printing, whichever is cheapest</option>
-          ${ps.map((p) => `<option value="p:${esc(p.key)}" ${w.printingChoice === `p:${p.key}` ? 'selected' : ''}>${esc(p.name)} · from ${money(p.from)} · ${p.copies} cop${p.copies === 1 ? 'y' : 'ies'}${p.copies < w.quantity ? ' (not enough)' : ''}</option>`).join('')}
+          <option value="">${esc(choiceLabel(w, i, ''))}</option>
+          <option value="mix" ${w.printingChoice === 'mix' ? 'selected' : ''}>${esc(choiceLabel(w, i, 'mix'))}</option>
+          <option value="same" ${w.printingChoice === 'same' ? 'selected' : ''}>${esc(choiceLabel(w, i, 'same'))}</option>
+          ${ps.map((p) => `<option value="p:${esc(p.key)}" ${w.printingChoice === `p:${p.key}` ? 'selected' : ''}>${esc(choiceLabel(w, i, `p:${p.key}`, p))}</option>`).join('')}
         </select></div></div>`).join('')}
     </details>`;
   }
@@ -605,18 +665,24 @@ export function mount() {
     const wants = (st.wants || []).map((w) => {
       const sorted = [...(w.offers || [])].sort((a, b) => a.price - b.price);
       const keep = sorted.filter((o, i) => i < 12 || inCart.has(o.seller) || chosen.has(o.id));
-      return [w.name, w.quantity, keep.map((o) => {
-        const row = [sellerIndex(o), o.price, o.available];
-        if (chosen.has(o.id)) row.push(chosen.get(o.id));
-        return row;
+      // Printings: names listed once per card, an index on each offer.
+      const ps = [...new Set(keep.map((o) => o.expansion || ''))];
+      const many = ps.length > 1;
+      const row = [w.name, w.quantity, keep.map((o) => {
+        const r = [sellerIndex(o), o.price, o.available];
+        if (chosen.has(o.id) || many) r.push(chosen.get(o.id) || 0);
+        if (many) r.push(ps.indexOf(o.expansion || ''));
+        return r;
       })];
+      if (many || w.printingChoice) row.push(many ? ps : [], w.printingChoice || '');
+      return row;
     });
     return JSON.stringify({
-      tool: 'cmopt-cart2', at: new Date().toISOString().slice(0, 16),
+      tool: 'cmopt-cart2', mix: s.samePrinting ? Number(s.mixPremium) || 0 : 0, at: new Date().toISOString().slice(0, 16),
       shipping: { CH: s.shipping.CH, default: s.shipping.default, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
       total: r?.total, exact: r?.exact || '',
       sellers, // [name, country, tracked only, VAT %]
-      wants, // [name, quantity, [[seller#, price, available, bought?]]]
+      wants, // [name, quantity, [[seller#, price, available, bought?, printing#?]], printings?, choice?]
     });
   }
 
@@ -718,6 +784,8 @@ export function mount() {
   // out in the background from the offers already loaded.
   async function findOptions() {
     const run = ++st.optionsRun;
+    st.printRun++;
+    st.printCost = new Map();
     const best = st.result;
     st.options = null;
     st.optionsBusy = true;
@@ -736,6 +804,7 @@ export function mount() {
     }
     st.optionsBusy = false;
     paintOptions();
+    findPrintCosts();
   }
   const paintOptions = () => {
     const el = shadow.getElementById('cmopt-options');
@@ -816,7 +885,9 @@ export function mount() {
     if (t.dataset.option) {
       st.result = st.options[Number(t.dataset.option)].result;
       st.extra = { ...st.extra, plan: null, msg: '' };
+      st.printCost = new Map();
       render();
+      findPrintCosts();
       return;
     }
     if (t.dataset.addseller) { await addItems(st.result.groups[Number(t.dataset.addseller)].items, t); return; }
@@ -865,6 +936,7 @@ export function mount() {
         st.extra = { ...st.extra, plan: null, msg: `${st.extra.want.name} added to the plan.` };
         st.options = null; st.optionsRun++; // worked out without the new card
         render();
+        findPrintCosts();
         break;
       }
       case 'useReplan': {
