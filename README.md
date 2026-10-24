@@ -33,7 +33,7 @@ Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. T
 ## iPad / iPhone (Safari)
 
 - **Bookmarklet:** in Safari, bookmark any page. Then go to Bookmarks → Edit, open that bookmark and replace its address with `dist/loader-bookmarklet.txt`. To run it, tap the bookmark while on cardmarket.com. On iPad, turn on Settings → Safari → **Show Favorites Bar** and save the bookmark in Favorites for one-tap access.
-- **Userscripts app** (free, App Store): enable it under Settings → Safari → Extensions. Then open [`dist/cm-optimizer.user.js`](https://raw.githubusercontent.com/feleir/cardmarket/ccr-dccc60d0-bzwg0v/dist/cm-optimizer.user.js) in Safari and install it from the Userscripts button. A ⚡ Optimize button then appears on Cardmarket pages, and updates arrive through its update URL.
+- **Userscripts app** (free, App Store): enable it under Settings → Safari → Extensions. Then open [`dist/cm-optimizer.user.js`](https://raw.githubusercontent.com/feleir/cardmarket/main/dist/cm-optimizer.user.js) in Safari and install it from the Userscripts button. A ⚡ Optimize button then appears on Cardmarket pages, and updates arrive through its update URL.
 
 ## Chrome extension (desktop)
 

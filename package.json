@@ -1,6 +1,6 @@
 {
   "name": "cardmarket-optimizer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Wants-list cart optimizer for Cardmarket that runs as a bookmarklet (works on Chrome for Android) or userscript.",
   "type": "module",
@@ -18,6 +18,6 @@
     "linkedom": "^0.18.5"
   },
   "config": {
-    "cmoptUrl": "https://raw.githubusercontent.com/feleir/cardmarket/ccr-dccc60d0-bzwg0v/dist/cm-optimizer.js"
+    "cmoptUrl": "https://raw.githubusercontent.com/feleir/cardmarket/main/dist/cm-optimizer.js"
   }
 }

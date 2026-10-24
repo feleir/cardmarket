@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Cardmarket Optimizer
 // @namespace    https://github.com/feleir/cardmarket
-// @version      0.2.0
+// @version      0.3.0
 // @description  Wants-list cart optimizer: cheapest cards + shipping across sellers, with a seller-country allow list.
 // @match        https://www.cardmarket.com/*
-// @updateURL    https://raw.githubusercontent.com/feleir/cardmarket/ccr-dccc60d0-bzwg0v/dist/cm-optimizer.user.js
-// @downloadURL  https://raw.githubusercontent.com/feleir/cardmarket/ccr-dccc60d0-bzwg0v/dist/cm-optimizer.user.js
+// @updateURL    https://raw.githubusercontent.com/feleir/cardmarket/main/dist/cm-optimizer.user.js
+// @downloadURL  https://raw.githubusercontent.com/feleir/cardmarket/main/dist/cm-optimizer.user.js
 // @grant        none
 // @inject-into  auto
 // @run-at       document-idle
