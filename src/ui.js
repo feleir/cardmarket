@@ -9,6 +9,7 @@ import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers
 import { parseDecklist } from './deck.js';
 import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
+import { planOptions } from './options.js';
 import { optimize } from './optimizer.js';
 import { addAll, cartLog, siteCartCode } from './cart.js';
 
@@ -68,6 +69,10 @@ textarea { min-height: 72px; font-family: ui-monospace, monospace; font-size: 13
 .panel { position: relative; }
 .muted { color: var(--muted); font-size: 13px; }
 .card { background: var(--card); border:1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.opts { width:100%; border-collapse: collapse; margin-top: 6px; }
+.opts td, .opts th { padding: 6px 4px 0; text-align:left; }
+.opts tr.note td { padding-top: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.opts tr.on td { font-weight: 600; }
 .sum { display:grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
 .sum b { text-align:right; }
 .big { font-size: 22px; font-weight: 700; }
@@ -106,6 +111,9 @@ export function mount() {
     fetcher: null,
     cartState: new Map(),
     extra: { query: '', qty: 4, busy: false, msg: '', plan: null, want: null },
+    options: null,      // other carts to choose from: [{ kind, result }]
+    optionsBusy: false,
+    optionsRun: 0,
     cartMsg: null,
     adding: false,
   };
@@ -199,6 +207,10 @@ export function mount() {
       ${s.anyPrinting ? `<label>Prefer the printing on the wants list unless another saves more than (€ per copy)</label>
         <input type="number" min="0" step="0.1" data-k="printingPremium" value="${s.printingPremium}">
         <p class="muted">0 = no preference, just the cheapest. Prices and totals stay real; this only steers the choice.</p>` : ''}
+      <label><input type="checkbox" data-k="samePrinting" ${s.samePrinting ? 'checked' : ''}> Keep all copies of a card in one printing</label>
+      ${s.samePrinting ? `<label>…unless mixing printings saves more than (€ per card)</label>
+        <input type="number" min="0" step="0.5" data-k="mixPremium" value="${s.mixPremium}">
+        <p class="muted">For cards whose copies can come from several printings (any printing, decklists, wants for any expansion).</p>` : ''}
       <details><summary>Printings / expansions</summary>
         <label>For "any printing" wants, check at most this many printings</label>
         <input type="number" min="1" max="60" data-k="maxVersions" value="${s.maxVersions}">
@@ -349,6 +361,35 @@ export function mount() {
     render();
   }
 
+  function viewOptions() {
+    if (st.optionsBusy) return '<div class="card"><b>Other options</b><p class="muted">Working out carts with fewer parcels…</p></div>';
+    const rows = st.options;
+    if (!rows) return '';
+    if (rows.length < 2) return '<div class="card"><b>Other options</b><p class="muted">No cart with fewer parcels can supply every card, and none is worth showing beside this one.</p></div>';
+    const base = rows[0].result;
+    const noteOf = (row) => {
+      const r = row.result;
+      const notes = [];
+      if (row.kind === 'best') notes.push('cheapest');
+      if (row.kind === 'matched') notes.push('one printing per card');
+      if (r.mixed?.length) notes.push(`${r.mixed.length} card(s) in mixed printings`);
+      if (r.exact === 'Optimal') notes.push('proven optimal');
+      return notes.join(' · ');
+    };
+    return `<div class="card"><b>Other options</b>
+      <p class="muted">The best cart for each number of parcels, from the offers already loaded. Fewer parcels can be worth a little more: less to track, fewer ratings to leave.</p>
+      <table class="opts"><tr><th>Parcels</th><th>Total</th><th>vs. cheapest</th><th></th></tr>
+      ${rows.map((row, i) => {
+        const r = row.result;
+        const d = r.total - base.total;
+        const on = st.result === r;
+        return `<tr class="${on ? 'on' : ''}"><td>${r.groups.length}</td><td><b>${money(r.total)}</b></td>
+          <td>${i === 0 ? '—' : `${d >= 0 ? '+' : '−'}${money(Math.abs(d))}`}</td>
+          <td>${on ? '<span class="ok">Showing</span>' : `<button class="btn sm" data-option="${i}">Use</button>`}</td></tr>
+          <tr class="note"><td colspan="4" class="muted">${esc(noteOf(row))}</td></tr>`;
+      }).join('')}</table></div>`;
+  }
+
   function viewResults() {
     const r = st.result;
     if (!r) return '<p class="muted">Run the optimizer first.</p>';
@@ -376,6 +417,8 @@ export function mount() {
       <p><button class="btn sec sm" data-act="cartData">Copy cart data</button> <span class="muted">to check a result that looks wrong</span></p>
       <textarea id="cmopt-cartdata" readonly hidden></textarea>
     </div>
+    <div id="cmopt-options">${viewOptions()}</div>
+    ${r.mixed?.length ? `<p class="muted">Mixed printings: ${r.mixed.map((m) => `${esc(m.name)} (${m.printings.map(esc).join(', ')})`).join('; ')}.</p>` : ''}
     ${viewExtra()}
     ${r.groups.map((g, gi) => `
       <div class="card">
@@ -555,39 +598,77 @@ export function mount() {
   const optOptions = () => {
     const s = st.settings;
     return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
-      printingPremium: s.anyPrinting ? s.printingPremium : 0, vatInParcelValue: !!s.vatInParcelValue };
+      printingPremium: s.anyPrinting ? s.printingPremium : 0, vatInParcelValue: !!s.vatInParcelValue,
+      mixPenalty: s.samePrinting ? Number(s.mixPremium) || 0 : 0 };
   };
 
-  async function reoptimize() {
+  // One cart: the exact solver's answer (when on) refined by the heuristic.
+  async function solve(wants, opts, { exactMs = st.settings.exactTimeMs, quiet = false } = {}) {
     const s = st.settings;
-    const wants = (st.wants || []).filter((w) => w.offers);
-    const opts = optOptions();
     let exactStatus = '';
-    // The exact model has no seller cap, so it is only used without one.
-    if (s.exact && !s.maxSellers) {
+    const o = { ...opts };
+    if (s.exact) {
       try {
-        setProgress(0.97, 'Loading exact solver…');
-        log('Loading exact solver (≈3.5 MB, cached by the browser after the first time)…');
+        if (!quiet) {
+          setProgress(0.97, 'Loading exact solver…');
+          log('Loading exact solver (≈3.5 MB, cached by the browser after the first time)…');
+        }
         const highs = await loadHighs();
-        setProgress(0.98, 'Solving exactly…');
+        if (!quiet) setProgress(0.98, 'Solving exactly…');
         await new Promise((r) => setTimeout(r, 50)); // let the label paint before the solver blocks
         const t = Date.now();
-        const ex = solveWith(highs, wants, { ...opts, timeLimitMs: s.exactTimeMs });
+        const ex = solveWith(highs, wants, { ...o, timeLimitMs: exactMs });
         if (ex) {
-          opts.warmStart = ex.picks;
+          o.warmStart = ex.picks;
           exactStatus = ex.status;
-          log(`Exact solver: ${ex.status === 'Optimal' ? 'proven optimal' : 'best found in time limit'} (${Date.now() - t} ms).`);
+          if (!quiet) log(`Exact solver: ${ex.status === 'Optimal' ? 'proven optimal' : 'best found in time limit'} (${Date.now() - t} ms).`);
         }
       } catch (e) {
-        log('Exact solver unavailable here (' + (e.message || e) + '); using the heuristic only.');
+        if (!quiet) log('Exact solver unavailable here (' + (e.message || e) + '); using the heuristic only.');
       }
     }
-    st.result = optimize(wants, opts);
-    st.result.exact = exactStatus;
+    await new Promise((r) => setTimeout(r, 0));
+    const r = optimize(wants, o);
+    r.exact = exactStatus;
+    return r;
+  }
+
+  async function reoptimize() {
+    const wants = (st.wants || []).filter((w) => w.offers);
+    st.result = await solve(wants, optOptions());
     st.running = false;
     st.tab = 'results';
     render();
+    findOptions();
   }
+
+  // After the cheapest cart: the other carts worth choosing between, worked
+  // out in the background from the offers already loaded.
+  async function findOptions() {
+    const run = ++st.optionsRun;
+    const best = st.result;
+    st.options = null;
+    st.optionsBusy = true;
+    paintOptions();
+    const wants = (st.wants || []).filter((w) => w.offers);
+    const opts = { ...optOptions(), timeBudgetMs: Math.min(1500, st.settings.timeBudgetMs) };
+    try {
+      const rows = await planOptions(wants, opts, best,
+        (w, o) => solve(w, o, { exactMs: Math.min(4000, st.settings.exactTimeMs), quiet: true }),
+        { stopped: () => run !== st.optionsRun });
+      if (run !== st.optionsRun) return;
+      st.options = rows;
+    } catch (e) {
+      console.error(e);
+      if (run === st.optionsRun) st.options = [];
+    }
+    st.optionsBusy = false;
+    paintOptions();
+  }
+  const paintOptions = () => {
+    const el = shadow.getElementById('cmopt-options');
+    if (el) el.innerHTML = viewOptions();
+  };
 
   function asText() {
     const r = st.result;
@@ -660,6 +741,12 @@ export function mount() {
       await addItems([st.result.groups[gi].items[ii]], t);
       return;
     }
+    if (t.dataset.option) {
+      st.result = st.options[Number(t.dataset.option)].result;
+      st.extra = { ...st.extra, plan: null, msg: '' };
+      render();
+      return;
+    }
     if (t.dataset.addseller) { await addItems(st.result.groups[Number(t.dataset.addseller)].items, t); return; }
     switch (t.dataset.act) {
       case 'close': rootEl.style.display = 'none'; break;
@@ -704,6 +791,7 @@ export function mount() {
         st.wants.push(st.extra.want);
         st.result = st.extra.plan.fit.result;
         st.extra = { ...st.extra, plan: null, msg: `${st.extra.want.name} added to the plan.` };
+        st.options = null; st.optionsRun++; // worked out without the new card
         render();
         break;
       }
@@ -712,6 +800,7 @@ export function mount() {
         st.result = st.extra.plan.replan.result;
         st.extra = { ...st.extra, plan: null, msg: `Re-planned with ${st.extra.want.name}. Items that moved need adding to the cart again.` };
         render();
+        findOptions();
         break;
       }
       case 'debug': {
@@ -746,7 +835,7 @@ export function mount() {
     if (!k || k === 'countryFilter') return;
     if (k === 'list') { st.listUrl = t.value; st.wants = null; st.result = null; render(); return; }
     if (k === 'sellerTypes') { update({ sellerTypes: t.value ? t.value.split(',').map(Number) : [] }); return; }
-    if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting' || k.startsWith('deck')) render(); }
+    if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting' || k === 'samePrinting' || k.startsWith('deck')) render(); }
     else if (k === 'deckText') { update({ deckText: t.value }); st.wants = null; render(); }
     else if (t.type === 'number' || ['minCondition', 'minRating'].includes(k)) update({ [k]: Number(t.value) || 0 });
     else update({ [k]: t.value });

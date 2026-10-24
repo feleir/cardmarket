@@ -52,6 +52,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - Optionally override language, minimum condition and foil. Otherwise each want's own settings are used.
    - **Any printing**: ignore the expansion a want names and also consider every other printing of the card, read from the card's all-printings page. Non-tournament printings in the block list stay excluded.
      With it on, **prefer the printing on the wants list unless another saves more than X € per copy** (default 0,50 €; 0 = plain cheapest). When choosing, the optimizer counts each copy of another printing X € dearer. Totals and the cart use real prices. Items from another printing are labelled.
+   - **Keep all copies of a card in one printing** unless mixing printings saves more than X € per card (default 2 €). For cards whose copies can come from several printings: any printing, decklists, wants for any expansion.
    - Set the minimum seller rating, seller type and sellers to block.
    - **Max sellers**, **Extra cost per seller**: trade money for fewer parcels.
    - **Printings**: for "any printing" wants, how many printings to check (cheapest first), and expansions to never buy from. Defaults include World Championship Decks and Collectors' Edition, which aren't tournament-legal.
@@ -61,6 +62,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - The total, split into cards and estimated shipping.
    - A comparison with "cheapest copy of every card".
    - Your order grouped by seller, plus a list of cards that couldn't be found.
+   - **Other options**: after the cheapest cart, the best cart for each smaller number of parcels (worked out in the background from the offers already loaded, with the exact solver too when it's on), and, if the cheapest mixes printings of a card, a cart with one printing per card. Each shows its total and how much more it costs than the cheapest; **Use** switches to it, and the cart buttons then work on that cart. Cards in mixed printings are listed under the totals.
    - **Add**, **Add all from seller** and **Add all to cart** buttons, and **Copy list**. **Add all** skips what is already in the cart, so it can be run again safely.
    - For each card, the best single seller for all its copies and what that would change in the total.
    - For every item, what taking the cheaper copies from another seller would change in the total: card prices plus shipping on both sides (a new parcel, a parcel moving up or down a step). A negative number would be a missed saving.

@@ -182,6 +182,11 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
 // same page, so the second press is queued behind a slow first answer.
 await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ page, text, requested, fail }) => {
   if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran although every card page was complete');
+  // Other options: no smaller set of sellers stocks every card here.
+  await page.waitForSelector('#cmopt-root >> text=Other options', { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => !/Working out/.test(document.querySelector('#cmopt-root').shadowRoot?.getElementById('cmopt-options')?.innerText || ''), null, { timeout: 30000 }).catch(() => {});
+  const opts = await page.locator('#cmopt-root #cmopt-options').innerText();
+  if (!/No cart with fewer parcels can supply every card/.test(opts)) fail(`options: ${opts}`);
   await page.click('#cmopt-root >> text=Add all to cart');
   await page.waitForSelector('#cmopt-root >> text=added to your cart', { timeout: 90000 }).catch(() => {});
   const got = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
@@ -240,7 +245,7 @@ await scenario('cut-off+exact', { scanMode: 'auto', exact: true }, '73,60 €', 
 await scenario('decklist', {
   source: 'deck', scanMode: 'auto',
   deckText: '4 Lightning Bolt (M10) 146\n1 Tinder Wall\n20 Mountain\n\n1 Made Up Card',
-}, '6,56 €', async ({ text, log, requested, fail }) => {
+}, '6,56 €', async ({ page, text, log, requested, fail }) => {
   if (!requested.some((r) => r.startsWith('/en/Magic/Cards/Lightning-Bolt'))) fail('deck card page not read');
   if (requested.some((r) => r.includes('Mountain'))) fail('basic land not skipped');
   if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran for a decklist');
@@ -250,5 +255,17 @@ await scenario('decklist', {
   const bolts = [...text.matchAll(/(\d+)× Lightning Bolt/g)].reduce((n, m) => n + Number(m[1]), 0);
   if (bolts !== 4) fail(`expected 4 Bolts, got ${bolts}`);
   if (!/Tinder Wall/.test(text)) fail('Tinder Wall not bought');
+  // Other options: zurich_cards alone, with an Alpha Bolt as the 4th copy:
+  // 3 × 0,60 + 150,00 + 0,30 + tracked 8,50 = 160,60 € (+154,04 €).
+  await page.waitForSelector('#cmopt-root [data-option="1"]', { timeout: 30000 }).catch(() => {});
+  const opts = await page.locator('#cmopt-root #cmopt-options').innerText();
+  if (!/1\s+160,60 €\s+\+154,04 €/.test(opts)) fail(`options: expected 1 parcel at 160,60 €: ${opts}`);
+  if (!/1 card\(s\) in mixed printings/.test(opts)) fail('options: mixed printings not noted');
+  await page.click('#cmopt-root [data-option="1"]');
+  const one = await page.locator('#cmopt-root main').innerText();
+  if (!/Sellers \/ parcels\s*1\b/.test(one) || !/Mixed printings: Lightning Bolt \(Magic 2010, Alpha\)/.test(one)) fail(`switching to the 1-parcel cart: ${one.slice(0, 600)}`);
+  await page.screenshot({ path: 'e2e-out/decklist-3-options.png' });
+  await page.click('#cmopt-root [data-option="0"]');
+  if (!(await page.locator('#cmopt-root main').innerText()).includes('6,56 €')) fail('could not switch back to the cheapest cart');
 });
 await browser.close();

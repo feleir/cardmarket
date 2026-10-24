@@ -98,6 +98,8 @@ export const DEFAULT_SETTINGS = {
   foil: 'want',           // 'want' | 'Y' | 'N' | 'any'
   anyPrinting: false,     // treat wants for one printing as "any printing"
   printingPremium: 0.5,   // with anyPrinting: another printing must save more than this per copy
+  samePrinting: false,    // keep all copies of a card in one printing...
+  mixPremium: 2,          // ...unless mixing saves more than this per card
   minRating: 0,           // 0..5, see RATINGS
   allowUnrated: true,
   sellerTypes: [],        // [] = all; 0 private, 1 professional, 2 powerseller

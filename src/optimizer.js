@@ -27,7 +27,7 @@ function mulberry32(seed) {
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // wants: [{ key, name, quantity, offers: [{ id, seller, countryCode, price, available, ... }] }]
-// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed, printingPremium, vatInParcelValue,
+// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed, printingPremium, mixPenalty, vatInParcelValue,
 //         warmStart: picks[wantIndex] = [{ id, count }] e.g. from the exact solver }
 export function optimize(wants, opts = {}) {
   const shipping = opts.shipping || {};
@@ -43,6 +43,9 @@ export function optimize(wants, opts = {}) {
   // What a copy counts toward a parcel's value for the shipping steps (the
   // 25 € tracked limit): by default the seller's price before the Swiss VAT
   // Cardmarket adds on top; with vatInParcelValue, the price with VAT.
+  // Keeping the copies of a card in one printing: every extra printing a
+  // card's copies come from counts this much when choosing.
+  const mixPenalty = Number(opts.mixPenalty) || 0;
   const tvOf = (o) => (opts.vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice);
 
   // Flatten into indexed arrays so the hot loops avoid object lookups.
@@ -52,6 +55,8 @@ export function optimize(wants, opts = {}) {
   const arts = [];
   const offers = []; // { s, a, price, ref }
   const wantOffers = [];
+  const pairIdx = new Map(); // "want|expansion" -> index
+  const pairWant = [];
   wants.forEach((w, wi) => {
     const list = [];
     for (const o of w.offers || []) {
@@ -73,7 +78,9 @@ export function optimize(wants, opts = {}) {
         arts.push(Math.max(1, o.available | 0));
       }
       list.push(offers.length);
-      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), price: o.price, tv: tvOf(o), cost: costOf(o), ref: o, w: wi });
+      const pk = `${wi}|${printingOf(o)}`;
+      if (!pairIdx.has(pk)) { pairIdx.set(pk, pairWant.length); pairWant.push(wi); }
+      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), e: pairIdx.get(pk), price: o.price, tv: tvOf(o), cost: costOf(o), ref: o, w: wi });
     }
     list.sort((x, y) => offers[x].cost - offers[y].cost);
     wantOffers[wi] = list;
@@ -94,9 +101,12 @@ export function optimize(wants, opts = {}) {
   let sV = new Float64Array(S);
   let used = new Int32Array(arts.length);
   let open = 0;
+  let pN = new Int32Array(pairWant.length); // copies per (want, printing)
+  let wP = new Int32Array(wants.length);    // printings in use per want
 
-  const save = () => ({ assign: assign.slice(), sN: sN.slice(), sV: sV.slice(), used: used.slice(), open });
-  const load = (st) => { assign = st.assign.slice(); sN = st.sN.slice(); sV = st.sV.slice(); used = st.used.slice(); open = st.open; };
+  const save = () => ({ assign: assign.slice(), sN: sN.slice(), sV: sV.slice(), used: used.slice(), open, pN: pN.slice(), wP: wP.slice() });
+  const load = (st) => { assign = st.assign.slice(); sN = st.sN.slice(); sV = st.sV.slice(); used = st.used.slice(); open = st.open; pN = st.pN.slice(); wP = st.wP.slice(); };
+  const reset = () => { assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); pN.fill(0); wP.fill(0); open = 0; };
 
   const put = (u, oi) => {
     const o = offers[oi];
@@ -104,6 +114,7 @@ export function optimize(wants, opts = {}) {
     if (sN[o.s]++ === 0) open++;
     sV[o.s] += o.tv;
     used[o.a]++;
+    if (pN[o.e]++ === 0) wP[o.w]++;
   };
   const take = (u) => {
     const oi = assign[u];
@@ -112,6 +123,7 @@ export function optimize(wants, opts = {}) {
     assign[u] = -1;
     if (--sN[o.s] === 0) { open--; sV[o.s] = 0; } else sV[o.s] -= o.tv;
     used[o.a]--;
+    if (--pN[o.e] === 0) wP[o.w]--;
   };
 
   let limitOn = false;
@@ -123,7 +135,8 @@ export function optimize(wants, opts = {}) {
       if (forbid && forbid.has(o.s)) return Infinity;
       if (limitOn && maxSellers && open >= maxSellers) return Infinity;
     }
-    return o.cost + ship(o.s, n + 1, sV[o.s] + o.tv) - ship(o.s, n, sV[o.s]);
+    return o.cost + ship(o.s, n + 1, sV[o.s] + o.tv) - ship(o.s, n, sV[o.s])
+      + (mixPenalty && pN[o.e] === 0 && wP[o.w] > 0 ? mixPenalty : 0);
   };
   const bestFor = (u, forbid, noise = 0) => {
     let best = -1;
@@ -141,6 +154,7 @@ export function optimize(wants, opts = {}) {
     let t = 0;
     for (let u = 0; u < units.length; u++) if (assign[u] >= 0) t += offers[assign[u]].cost;
     for (let s = 0; s < S; s++) t += ship(s, sN[s], sV[s]);
+    if (mixPenalty) for (let w = 0; w < wants.length; w++) if (wP[w] > 1) t += (wP[w] - 1) * mixPenalty;
     return t;
   };
   const missing = () => { let m = 0; for (let u = 0; u < units.length; u++) if (assign[u] < 0) m++; return m; };
@@ -320,7 +334,7 @@ export function optimize(wants, opts = {}) {
   };
 
   const construct = (noise) => {
-    assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); open = 0;
+    reset();
     // Scarce, expensive copies first: they constrain the rest the most.
     const order = units.map((_, u) => u);
     const key = order.map((u) => {
@@ -358,7 +372,7 @@ export function optimize(wants, opts = {}) {
   // Cheapest copy of every card, ignoring shipping. Searching from here
   // guarantees the result is never worse than buying cheapest-per-card.
   const fromCheapest = () => {
-    assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); open = 0;
+    reset();
     for (let u = 0; u < units.length; u++) {
       for (const oi of wantOffers[units[u]]) {
         if (used[offers[oi].a] < arts[offers[oi].a]) { put(u, oi); break; }
@@ -396,7 +410,7 @@ export function optimize(wants, opts = {}) {
 
   // A given solution (the exact solver's) as a start.
   const fromPicks = () => {
-    assign.fill(-1); sN.fill(0); sV.fill(0); used.fill(0); open = 0;
+    reset();
     const left = new Map();
     opts.warmStart.forEach((list, wi) => (list || []).forEach((p) => left.set(`${wi}|${p.id}`, p.count)));
     for (let u = 0; u < units.length; u++) {
@@ -468,7 +482,7 @@ export function optimize(wants, opts = {}) {
       if (m <= 0) continue;
       const here = ship(o.s, sN[o.s] - m, sV[o.s] - m * o.tv) - ship(o.s, sN[o.s], sV[o.s]);
       const there = ship(x.s, sN[x.s] + m, sV[x.s] + m * x.tv) - ship(x.s, sN[x.s], sV[x.s]);
-      const d = m * (x.cost - o.cost) + here + there;
+      const d = m * (x.cost - o.cost) + here + there + mixChange(o.w, [[o.e, -m], [x.e, m]]);
       if (!best || d < best.delta) {
         best = { delta: round(d), moved: m, seller: sellers[x.s].name, price: x.price, inCart: sN[x.s] > 0,
           cardsSaved: round(m * (o.price - x.price)), shippingThere: round(there), shippingHere: round(here),
@@ -514,12 +528,13 @@ export function optimize(wants, opts = {}) {
       let need = mine.length;
       let cost = 0;
       let value = 0;
+      const moves = mine.map((u) => [offers[assign[u]].e, -1]);
       for (const oj of list) {
         const x = offers[oj];
         const ownHere = mine.filter((u) => assign[u] === oj).length;
         const k = Math.min(need, arts[x.a] - used[x.a] + ownHere);
         if (k <= 0) continue;
-        need -= k; cost += k * x.cost; value += k * x.tv;
+        need -= k; cost += k * x.cost; value += k * x.tv; moves.push([x.e, k]);
         if (!need) break;
       }
       if (need) continue;
@@ -527,10 +542,21 @@ export function optimize(wants, opts = {}) {
       const stayV = (sV[t] || 0) - (v.get(t) || 0);
       // leave already took t's parcel down to stayN/stayV; join takes it up.
       const join = ship(t, stayN + mine.length, stayV + value) - ship(t, stayN, stayV);
-      const d = (cost - base) + leave + join;
+      const d = (cost - base) + leave + join + mixChange(wi, moves);
       if (!best || d < best.delta) best = { seller: sellers[t].name, copies: mine.length, delta: round(d), inCart: sN[t] > 0 };
     }
     return best;
+  }
+
+  // The change in the printing penalty for card wi when copies move between
+  // its printings: changes = [[pair index, +/- copies]].
+  function mixChange(wi, changes) {
+    if (!mixPenalty) return 0;
+    const n = new Map();
+    for (const [e, k] of changes) n.set(e, (n.get(e) ?? pN[e]) + k);
+    let p = wP[wi];
+    for (const [e, k] of n) p += (k > 0 ? 1 : 0) - (pN[e] > 0 ? 1 : 0);
+    return (Math.max(0, p - 1) - Math.max(0, wP[wi] - 1)) * mixPenalty;
   }
 
   function summarize() {
@@ -579,8 +605,17 @@ export function optimize(wants, opts = {}) {
       shippingCost += sh;
       return { ...g, items: [...g.items.values()], shipping: sh - penalty, value: round(g.value) };
     }).sort((a, b) => b.value - a.value);
+    // Cards whose copies come from more than one printing.
+    const mixed = [];
+    for (let w = 0; w < wants.length; w++) {
+      if (wP[w] < 2) continue;
+      const names = new Set();
+      for (let u = 0; u < units.length; u++) if (units[u] === w && assign[u] >= 0) names.add(offers[assign[u]].ref.expansion || '?');
+      mixed.push({ name: wants[w].name, printings: [...names] });
+    }
     return {
       groups,
+      mixed,
       missing: [...missingByWant.values()],
       itemsCost: round(itemsCost),
       shippingCost: round(shippingCost - penalty * groups.length),
@@ -615,3 +650,5 @@ export function baseline(wants, shipping, vatInParcelValue = false) {
 }
 
 const round = (x) => Math.round(x * 100) / 100;
+// The printing an offer is of, for keeping a card's copies in one printing.
+export const printingOf = (o) => String(o.expansion || o.productUrl || '').trim().toLowerCase();

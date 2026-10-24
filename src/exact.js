@@ -13,12 +13,17 @@
 //        Σ_{o∈s} x_o     <= Σ_t maxCards_t z_{s,t}
 //        Σ_{o∈s} p_o x_o <= Σ_t maxValue_t z_{s,t}
 //        Σ_t z_{s,t} <= 1
+//        Σ_{s,t} z_{s,t} <= maxSellers                   (when capped)
+// Keeping a card's copies in one printing (mixPenalty): y_{w,e} binary says
+// printing e of want w is used, each costs mixPenalty, and
+//        Σ_{o∈(w,e)} x_o <= quantity_w y_{w,e}
 import { sellerTiers, shippingVat } from './shipping.js';
+import { printingOf } from './optimizer.js';
 
 const BIG = 10000;
 export const HIGHS_VERSION = '1.15.4';
 
-export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium = 0, vatInParcelValue = false } = {}) {
+export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium = 0, vatInParcelValue = false, maxSellers = 0, mixPenalty = 0 } = {}) {
   const vars = [];
   const sellers = new Map();
   const articles = new Map();
@@ -49,6 +54,23 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
     obj.push(`${BIG} m${wi}`);
     cons.push(` w${wi}: ${[...vs, `m${wi}`].join(' + ')} = ${Math.max(0, w.quantity | 0)}`);
   });
+  if (Number(mixPenalty) > 0) {
+    wants.forEach((w, wi) => {
+      const byPrinting = new Map();
+      for (const x of vars) if (x.wi === wi) {
+        const e = printingOf(x.o);
+        if (!byPrinting.has(e)) byPrinting.set(e, []);
+        byPrinting.get(e).push(x.v);
+      }
+      if (byPrinting.size < 2) return;
+      [...byPrinting.values()].forEach((vs, ei) => {
+        const y = `y${wi}_${ei}`;
+        obj.push(`${Number(mixPenalty)} ${y}`);
+        bins.push(y);
+        cons.push(` p${wi}_${ei}: ${vs.join(' + ')} - ${Math.max(1, w.quantity | 0)} ${y} <= 0`);
+      });
+    });
+  }
   let ai = 0;
   for (const a of articles.values()) {
     if (a.vs.length > 1) cons.push(` a${ai++}: ${a.vs.join(' + ')} <= ${a.cap}`);
@@ -59,6 +81,9 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
     cons.push(` n${s.idx}: ${s.xs.map((x) => x.v).join(' + ')} ${zs.map(({ t, z }) => `- ${t.maxCards} ${z}`).join(' ')} <= 0`);
     cons.push(` v${s.idx}: ${s.xs.map((x) => `${x.p} ${x.v}`).join(' + ')} ${zs.map(({ t, z }) => `- ${t.maxValue} ${z}`).join(' ')} <= 0`);
     cons.push(` o${s.idx}: ${zs.map(({ z }) => z).join(' + ')} <= 1`);
+  }
+  if (Number(maxSellers) > 0 && sellers.size) {
+    cons.push(` cap: ${[...sellers.values()].flatMap((s) => s.tiers.map((t, ti) => `z${s.idx}_${ti}`)).join(' + ')} <= ${Number(maxSellers)}`);
   }
   const lp = `Minimize\n obj: ${obj.join(' + ')}\nSubject To\n${cons.join('\n')}\nBounds\n${bounds.join('\n')}\nGeneral\n ${ints.join(' ')}\nBinary\n ${bins.join(' ')}\nEnd\n`;
   return { lp, vars };
