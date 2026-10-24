@@ -77,10 +77,17 @@ export function solveWith(highs, wants, opts = {}) {
 }
 
 let loading;
-// Loads HiGHS from jsDelivr. Rejects if the page's security policy blocks it.
+// Where the solver comes from. The bookmarklet loads it from jsDelivr. The
+// Chrome extension ships it in its package (the Web Store forbids remotely
+// loaded code): its build sets globalThis.__CMOPT_EXT__, and a script in the
+// extension's own world publishes the package URL on <html data-cmopt-ext>.
 export function loadHighs() {
   loading ||= (async () => {
-    const base = `https://cdn.jsdelivr.net/npm/highs@${HIGHS_VERSION}/build/`;
+    // Written inline so the build drops the branch it does not use.
+    const base = globalThis.__CMOPT_EXT__
+      ? document.documentElement.dataset.cmoptExt
+      : `https://cdn.jsdelivr.net/npm/highs@${HIGHS_VERSION}/build/`;
+    if (!base) throw new Error('solver files not found in the extension');
     const mod = await import(/* @vite-ignore */ `${base}highs.mjs`);
     return mod.default({ locateFile: (f) => base + f });
   })();

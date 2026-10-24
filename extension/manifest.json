@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "Wants Optimizer for Cardmarket",
+  "short_name": "Wants Optimizer",
+  "version": "0.2.0",
+  "description": "Cheapest cart for a Cardmarket wants list: card prices plus shipping across sellers. Not affiliated with Cardmarket.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Optimize this wants list",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.cardmarket.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.cardmarket.com/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.cardmarket.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "highs/*"
+      ],
+      "matches": [
+        "https://www.cardmarket.com/*"
+      ]
+    }
+  ],
+  "minimum_chrome_version": "111"
+}

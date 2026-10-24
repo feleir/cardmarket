@@ -30,6 +30,15 @@ It runs inside cardmarket.com in your own logged-in browser, including **Chrome 
 
 Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. The bookmarklet picks it up within a few minutes, since raw.githubusercontent.com caches for about 5 minutes. If the branch changes (e.g. after merging to `main`), update `config.cmoptUrl`, rebuild, and re-copy the bookmarklet.
 
+## Chrome extension (desktop)
+
+Chrome, Edge, Brave and Opera on desktop. It adds a **⚡ Optimize** button on every Cardmarket page, and a toolbar button that opens the panel.
+
+- **Install now:** download [`dist/cardmarket-optimizer-extension.zip`](dist/cardmarket-optimizer-extension.zip) and unzip it. Open `chrome://extensions`, turn on **Developer mode**, and click **Load unpacked** on the unzipped folder.
+- **Publish:** see [docs/chrome-web-store.md](docs/chrome-web-store.md) (listing text, permission justifications, privacy) and [PRIVACY.md](PRIVACY.md).
+
+It runs the same code as the bookmarklet, in the page's own JavaScript world, because the cart feature uses Cardmarket's request queue. All code ships in the package, including the exact solver; the Web Store allows no remote code. `npm run extension` builds it and runs its end-to-end test in Chromium.
+
 ## How to use
 
 1. **Setup:**
