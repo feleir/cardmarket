@@ -13,7 +13,7 @@
 //        Σ_{o∈s} x_o     <= Σ_t maxCards_t z_{s,t}
 //        Σ_{o∈s} p_o x_o <= Σ_t maxValue_t z_{s,t}
 //        Σ_t z_{s,t} <= 1
-import { sellerTiers } from './shipping.js';
+import { sellerTiers, shippingVat } from './shipping.js';
 
 const BIG = 10000;
 export const HIGHS_VERSION = '1.15.4';
@@ -26,8 +26,9 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
     if (!(o.price > 0)) return;
     const v = `x${vars.length}`;
     vars.push({ v, wi, oi, o });
-    if (!sellers.has(o.seller)) sellers.set(o.seller, { idx: sellers.size, tiers: sellerTiers(shipping, o), xs: [] });
+    if (!sellers.has(o.seller)) sellers.set(o.seller, { idx: sellers.size, tiers: sellerTiers(shipping, o), vat: shippingVat(o), xs: [] });
     else if (o.trackedOnly) sellers.get(o.seller).tiers = sellerTiers(shipping, o);
+    sellers.get(o.seller).vat = Math.max(sellers.get(o.seller).vat, shippingVat(o));
     // Parcel value for the shipping steps: before VAT unless asked otherwise.
     sellers.get(o.seller).xs.push({ v, p: vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice });
     if (!articles.has(o.id)) articles.set(o.id, { cap: Math.max(1, o.available | 0), vs: [] });
@@ -54,7 +55,7 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
   }
   for (const s of sellers.values()) {
     const zs = s.tiers.map((t, ti) => ({ t, z: `z${s.idx}_${ti}` }));
-    zs.forEach(({ t, z }) => { obj.push(`${t.price + sellerPenalty} ${z}`); bins.push(z); });
+    zs.forEach(({ t, z }) => { obj.push(`${Math.round(t.price * s.vat * 100) / 100 + sellerPenalty} ${z}`); bins.push(z); });
     cons.push(` n${s.idx}: ${s.xs.map((x) => x.v).join(' + ')} ${zs.map(({ t, z }) => `- ${t.maxCards} ${z}`).join(' ')} <= 0`);
     cons.push(` v${s.idx}: ${s.xs.map((x) => `${x.p} ${x.v}`).join(' + ')} ${zs.map(({ t, z }) => `- ${t.maxValue} ${z}`).join(' ')} <= 0`);
     cons.push(` o${s.idx}: ${zs.map(({ z }) => z).join(' + ')} <= 1`);

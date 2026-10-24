@@ -36,3 +36,7 @@ export function sellerTiers(shipping, offer) {
   const tracked = tiers.filter((t) => t.maxValue > TRACKED_ABOVE);
   return tracked.length ? tracked : tiers;
 }
+
+// Swiss VAT, which Cardmarket adds to the whole order (cards and shipping)
+// for sellers whose prices carry the VAT note: the multiplier for shipping.
+export const shippingVat = (offer) => 1 + (Number(offer?.vat) || 0) / 100;

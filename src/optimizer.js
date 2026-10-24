@@ -9,7 +9,7 @@
 // seller; then iterated local search (shake the best cart, search again)
 // within a time budget. The
 // cheapest-copy-everywhere baseline is reported alongside for comparison.
-import { tierCost, sellerTiers } from './shipping.js';
+import { tierCost, sellerTiers, shippingVat } from './shipping.js';
 
 const EPS = 1e-7;
 
@@ -58,8 +58,11 @@ export function optimize(wants, opts = {}) {
       if (!(o.price > 0)) continue;
       if (!sellerIdx.has(o.seller)) {
         sellerIdx.set(o.seller, sellers.length);
-        sellers.push({ name: o.seller, tiers: sellerTiers(shipping, o), ref: o });
-      } else if (o.trackedOnly && !sellers[sellerIdx.get(o.seller)].ref.trackedOnly) {
+        sellers.push({ name: o.seller, tiers: sellerTiers(shipping, o), ref: o, vat: shippingVat(o) });
+      } else if (o.vat && sellers[sellerIdx.get(o.seller)].vat < shippingVat(o)) {
+        sellers[sellerIdx.get(o.seller)].vat = shippingVat(o);
+      }
+      if (sellerIdx.has(o.seller) && o.trackedOnly && !sellers[sellerIdx.get(o.seller)].ref.trackedOnly) {
         // Tracked-only is the seller's setting; any offer showing it counts.
         const sl = sellers[sellerIdx.get(o.seller)];
         sl.tiers = sellerTiers(shipping, o);
@@ -81,7 +84,9 @@ export function optimize(wants, opts = {}) {
   });
 
   const S = sellers.length;
-  const ship = (s, n, v) => (n > 0 ? tierCost(sellers[s].tiers, n, v) + penalty : 0);
+  // Shipping for a parcel: its tier, plus the VAT Cardmarket adds to the
+  // whole order (shipping included) for sellers whose prices carry it.
+  const ship = (s, n, v) => (n > 0 ? Math.round(tierCost(sellers[s].tiers, n, v) * sellers[s].vat * 100) / 100 + penalty : 0);
 
   // ---- mutable state ----
   let assign = new Int32Array(units.length).fill(-1);
@@ -600,12 +605,12 @@ export function baseline(wants, shipping, vatInParcelValue = false) {
       items += o.price;
       const g = per.get(o.seller) || { n: 0, v: 0, ref: o };
       g.n++; g.v += vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice;
-      if (o.trackedOnly) g.ref = o;
+      if (o.trackedOnly || (o.vat && !g.ref.vat)) g.ref = { ...g.ref, trackedOnly: g.ref.trackedOnly || o.trackedOnly, vat: Math.max(g.ref.vat || 0, o.vat || 0), countryCode: o.countryCode };
       per.set(o.seller, g);
     }
   }
   let ship = 0;
-  for (const g of per.values()) ship += tierCost(sellerTiers(shipping, g.ref), g.n, g.v);
+  for (const g of per.values()) ship += Math.round(tierCost(sellerTiers(shipping, g.ref), g.n, g.v) * shippingVat(g.ref) * 100) / 100;
   return { total: round(items + ship), itemsCost: round(items), shippingCost: round(ship), sellers: per.size, missing };
 }
 
