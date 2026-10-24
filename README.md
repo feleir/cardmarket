@@ -47,7 +47,8 @@ Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. T
    - A comparison with "cheapest copy of every card".
    - Your order grouped by seller, plus a list of cards that couldn't be found.
    - **Add**, **Add all from seller** and **Add all to cart** buttons, and **Copy list**. **Add all** skips what is already in the cart, so it can be run again safely.
-   - **Copy cart data**: every offer the optimizer saw plus the result, as JSON, to rerun and check a result offline.
+   - For every item, what taking the cheaper copies from another seller would change in the total: card prices plus shipping on both sides (a new parcel, a parcel moving up or down a step). A negative number would be a missed saving.
+   - **Copy cart data**: a compact JSON of the offers and the result; `node scripts/check-cart.mjs <file>` reruns it against the exact solver.
 
 ## How the optimizer works
 

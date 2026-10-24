@@ -210,6 +210,6 @@ await scenario('cut-off+exact', { scanMode: 'auto', exact: true }, '73,60 €', 
   if (!requested.some((r) => r.includes('/Users/bigstore_ch/Offers/Singles?idWantsList=123&site=2'))) fail('second page of the seller scan not read');
   if (!requested.includes('CDN highs.wasm')) fail('exact solver not loaded');
   if (!/Proven optimal by the exact solver/.test(text)) fail('exact solver result not used');
-  if (!/Cheapest: 0,60 € at zurich_cards/.test(text)) fail('bundling explanation missing');
+  if (!/Cheaper: 0,60 € at zurich_cards. Taking 3 copies there/.test(text)) fail('bundling explanation missing');
 }, [`${P}/Ice-Age/Counterspell`]);
 await browser.close();

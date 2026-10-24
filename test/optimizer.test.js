@@ -103,3 +103,23 @@ test('matches brute force on random small instances', () => {
   }
   assert.ok(worse <= 2, `heuristic missed the optimum on ${worse} instances`);
 });
+
+test('explains what taking the cheaper copies elsewhere would cost', async () => {
+  const { DEFAULT_SHIPPING } = await import('../src/constants.js');
+  // A sells Q (19 €) and P at 7,00; B sells P at 7,10 and X. Taking P from A
+  // would push A's parcel over 25 € into tracked shipping.
+  const wants = [
+    { key: 'q', name: 'Q', quantity: 1, offers: [{ id: 'q', seller: 'A', countryCode: 'CH', price: 19, available: 1 }] },
+    { key: 'p', name: 'P', quantity: 2, offers: [
+      { id: 'pa', seller: 'A', countryCode: 'CH', price: 7, available: 2 },
+      { id: 'pb', seller: 'B', countryCode: 'CH', price: 7.1, available: 2 }] },
+    { key: 'x', name: 'X', quantity: 1, offers: [{ id: 'x', seller: 'B', countryCode: 'CH', price: 0.5, available: 1 }] },
+  ];
+  const r = optimize(wants, { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.equal(r.total, 37.36); // A: 19 + 1,83; B: 14,20 + 0,50 + 1,83
+  const p = r.groups.find((g) => g.seller === 'B').items.find((it) => it.want.name === 'P');
+  assert.deepEqual(
+    { moved: p.switch.moved, seller: p.switch.seller, cards: p.switch.cardsSaved, there: p.switch.shippingThere, here: p.switch.shippingHere, delta: p.switch.delta },
+    { moved: 2, seller: 'A', cards: 0.2, there: 6.67, here: 0, delta: 6.47 },
+  );
+});

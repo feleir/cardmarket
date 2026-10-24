@@ -192,6 +192,41 @@ export function optimize(wants, opts = {}) {
     return any;
   };
 
+  // Move every copy of one card that a seller supplies to another seller at
+  // once. Single-copy moves miss this when only moving them together pays
+  // (both copies leave a parcel and drop its shipping step, or the second
+  // copy is what makes the other parcel worth it).
+  const groupPass = (deadline) => {
+    let any = false;
+    let cur = score();
+    const bySellerWant = new Map();
+    for (let u = 0; u < units.length; u++) {
+      if (assign[u] < 0) continue;
+      const k = `${offers[assign[u]].s}|${units[u]}`;
+      if (!bySellerWant.has(k)) bySellerWant.set(k, []);
+      bySellerWant.get(k).push(u);
+    }
+    for (const us of bySellerWant.values()) {
+      if (us.length < 2 || now() > deadline) continue;
+      const s0 = offers[assign[us[0]]].s;
+      const wi = units[us[0]];
+      for (const oj of wantOffers[wi]) {
+        if (offers[oj].s === s0) continue;
+        const snap = save();
+        const before = us.map((u) => assign[u]);
+        us.forEach(take);
+        let moved = 0;
+        for (const u of us) {
+          if (used[offers[oj].a] < arts[offers[oj].a] && delta(oj, null) < Infinity) { put(u, oj); moved++; }
+        }
+        us.forEach((u, i) => { if (assign[u] < 0) put(u, before[i]); });
+        if (moved && score() < cur - EPS) { cur = score(); any = true; break; }
+        load(snap);
+      }
+    }
+    return any;
+  };
+
   const unitsOf = (s) => {
     const r = [];
     for (let u = 0; u < units.length; u++) if (assign[u] >= 0 && offers[assign[u]].s === s) r.push(u);
@@ -248,6 +283,7 @@ export function optimize(wants, opts = {}) {
       let improved = false;
       reassignPass(null);
       if (chainPass(deadline)) reassignPass(null);
+      if (groupPass(deadline)) reassignPass(null);
       cur = score();
       // Close sellers with the fewest copies first; those parcels are the
       // likeliest to be worth merging into others.
@@ -404,6 +440,30 @@ export function optimize(wants, opts = {}) {
     stats: { restarts, ms: Math.round(now() - start), sellersConsidered: S, offersConsidered: offers.length },
   };
 
+  // What taking this card's copies from the best cheaper offer elsewhere
+  // would change in the total: the price difference, plus shipping on both
+  // sides (a new parcel, a parcel moving up or down a step). Positive means
+  // the cart as chosen is cheaper; negative would be a missed saving.
+  function switchCost(oi, n) {
+    const o = offers[oi];
+    let best = null;
+    for (const oj of wantOffers[o.w]) {
+      const x = offers[oj];
+      if (x.s === o.s || x.price >= o.price - EPS) continue;
+      const m = Math.min(n, arts[x.a] - used[x.a]);
+      if (m <= 0) continue;
+      const here = ship(o.s, sN[o.s] - m, sV[o.s] - m * o.price) - ship(o.s, sN[o.s], sV[o.s]);
+      const there = ship(x.s, sN[x.s] + m, sV[x.s] + m * x.price) - ship(x.s, sN[x.s], sV[x.s]);
+      const d = m * (x.price - o.price) + here + there;
+      if (!best || d < best.delta) {
+        best = { delta: round(d), moved: m, seller: sellers[x.s].name, price: x.price, inCart: sN[x.s] > 0,
+          cardsSaved: round(m * (o.price - x.price)), shippingThere: round(there), shippingHere: round(here),
+          overCap: !!maxSellers && sN[x.s] === 0 && sN[o.s] > m && open >= maxSellers };
+      }
+    }
+    return best;
+  }
+
   function summarize() {
     const bySeller = new Map();
     const missingByWant = new Map();
@@ -425,13 +485,14 @@ export function optimize(wants, opts = {}) {
         for (const x of wants[o.w].offers || []) {
           if (x.price > 0 && x.price < o.price - EPS && x.seller !== o.ref.seller && (!cheapest || x.price < cheapest.price)) cheapest = x;
         }
-        g.items.set(k, { offer: o.ref, want: wants[o.w], quantity: 0, cheapest: cheapest && { price: cheapest.price, seller: cheapest.seller } });
+        g.items.set(k, { offer: o.ref, want: wants[o.w], quantity: 0, oi, cheapest: cheapest && { price: cheapest.price, seller: cheapest.seller } });
       }
       g.items.get(k).quantity++;
       g.cards++;
       g.value += o.price;
       itemsCost += o.price;
     }
+    for (const g of bySeller.values()) for (const it of g.items.values()) it.switch = switchCost(it.oi, it.quantity);
     let shippingCost = 0;
     const groups = [...bySeller.entries()].map(([s, g]) => {
       const sh = ship(s, g.cards, g.value);

@@ -237,6 +237,23 @@ export function mount() {
         <textarea id="cmopt-debug" readonly hidden></textarea></section>` : ''}`;
   }
 
+  // Why this copy and not the cheaper one: what moving the copies there would
+  // do to the total (card prices, plus shipping on both sides).
+  function switchNote(it) {
+    const w = it.switch;
+    if (!w) return '';
+    const n = w.moved > 1 ? `${w.moved} copies` : 'it';
+    const parts = [`cards ${money(-w.cardsSaved)}`];
+    if (!w.inCart) parts.push(`new parcel from ${esc(w.seller)} ${money(w.shippingThere)}`);
+    else if (w.shippingThere > 0.005) parts.push(`${esc(w.seller)}'s parcel goes up a shipping step +${money(w.shippingThere)}`);
+    if (w.shippingHere < -0.005) parts.push(`this parcel gets ${money(-w.shippingHere)} cheaper`);
+    const head = `Cheaper: ${money(w.price)} at ${esc(w.seller)}. Taking ${n} there: ${parts.join(', ')}`;
+    if (w.delta < -0.005) {
+      return `<div class="warn">${head} = saves ${money(-w.delta)}${w.overCap ? ', but that would exceed your max sellers' : ' (missed saving)'}.</div>`;
+    }
+    return `<div class="muted">${head} = ${w.delta < 0.005 ? 'same total' : `+${money(w.delta)} overall`}, so it stays here.</div>`;
+  }
+
   function cartButton(it, gi, ii) {
     const state = st.cartState.get(it.offer.id);
     if (state === 'added') return '<span class="ok">In cart ✓</span>';
@@ -279,7 +296,7 @@ export function mount() {
         ${g.items.map((it, ii) => `<div class="item">
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
             <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.vat ? ` · incl. ${it.offer.vat}% VAT` : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
-            ${it.cheapest ? `<div class="muted">Cheapest: ${money(it.cheapest.price)} at ${esc(it.cheapest.seller)} — bundled here, cheaper with shipping</div>` : ''}</div>
+            ${switchNote(it)}</div>
           <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
         <p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>
@@ -374,14 +391,33 @@ export function mount() {
   function cartData() {
     const s = st.settings;
     const r = st.result;
-    const offerRow = (o) => [o.seller, o.price, o.available, o.countryCode, o.trackedOnly ? 1 : 0, o.expansion, langName(o.language), condCode(o.condition), o.id];
+    // Compact so it fits in one chat message: sellers listed once, and per
+    // card its 12 cheapest offers plus every offer from a seller in the cart.
+    const inCart = new Set((r?.groups || []).map((g) => g.seller));
+    const sellers = [];
+    const si = new Map();
+    const sellerIndex = (o) => {
+      if (!si.has(o.seller)) { si.set(o.seller, sellers.length); sellers.push([o.seller, o.countryCode, o.trackedOnly ? 1 : 0]); }
+      if (o.trackedOnly) sellers[si.get(o.seller)][2] = 1;
+      return si.get(o.seller);
+    };
+    const chosen = new Map();
+    for (const g of r?.groups || []) for (const it of g.items) chosen.set(it.offer.id, it.quantity);
+    const wants = (st.wants || []).map((w) => {
+      const sorted = [...(w.offers || [])].sort((a, b) => a.price - b.price);
+      const keep = sorted.filter((o, i) => i < 12 || inCart.has(o.seller) || chosen.has(o.id));
+      return [w.name, w.quantity, keep.map((o) => {
+        const row = [sellerIndex(o), o.price, o.available];
+        if (chosen.has(o.id)) row.push(chosen.get(o.id));
+        return row;
+      })];
+    });
     return JSON.stringify({
-      tool: 'cmopt-cart', at: new Date().toISOString(),
-      settings: { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, anyPrinting: s.anyPrinting, sellerCountries: s.sellerCountries },
-      offerColumns: ['seller', 'price', 'available', 'country', 'trackedOnly', 'expansion', 'language', 'condition', 'id'],
-      wants: (st.wants || []).map((w) => ({ name: w.name, quantity: w.quantity, kind: w.kind, expansion: w.expansion, offers: (w.offers || []).map(offerRow) })),
-      result: r && { total: r.total, itemsCost: r.itemsCost, shippingCost: r.shippingCost, exact: r.exact || '',
-        groups: r.groups.map((g) => ({ seller: g.seller, cards: g.cards, value: g.value, shipping: g.shipping, items: g.items.map((it) => [it.quantity, it.want.name, it.offer.price, it.offer.id]) })) },
+      tool: 'cmopt-cart2', at: new Date().toISOString().slice(0, 16),
+      shipping: { CH: s.shipping.CH, default: s.shipping.default, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
+      total: r?.total, exact: r?.exact || '',
+      sellers, // [name, country, tracked only]
+      wants, // [name, quantity, [[seller#, price, available, bought?]]]
     });
   }
 
