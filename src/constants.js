@@ -88,6 +88,10 @@ export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' E
 export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
+  source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist)
+  deckText: '',
+  deckSideboard: true,
+  deckSkipBasics: true,
   sellerCountries: [4],
   languages: [],          // empty = use what each want says
   minCondition: 0,        // 0 = use what each want says

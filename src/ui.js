@@ -5,7 +5,8 @@ import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, D
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
-import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers, findCard } from './collect.js';
+import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers, findCard, deckWants, collectDeck } from './collect.js';
+import { parseDecklist } from './deck.js';
 import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
@@ -146,6 +147,22 @@ export function mount() {
   const update = (patch) => { Object.assign(st.settings, patch); saveSettings(st.settings); };
 
   // ---------- views ----------
+  function viewWantsPicker() {
+    return `<select data-k="list">${st.lists.length ? '' : `<option value="${esc(st.listUrl)}">${st.listUrl ? 'This wants list' : 'Loading lists…'}</option>`}
+        ${st.lists.map((l) => `<option value="${esc(l.url)}" ${l.url === st.listUrl ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
+      </select>
+      ${st.wants ? `<p class="muted">${st.wants.length} entries loaded${st.wants.some((w) => w.offers) ? ', offers fetched' : ''}.</p>` : ''}`;
+  }
+
+  // Decklist mode: paste a list exported from a deck site.
+  function viewDeck(s) {
+    const entries = parseDecklist(s.deckText, { includeSideboard: s.deckSideboard, skipBasics: s.deckSkipBasics });
+    return `<textarea id="cmopt-deck" data-k="deckText" style="min-height:160px" placeholder="Paste a decklist, e.g.&#10;4 Lightning Bolt&#10;4 Goblin Guide (ZEN)&#10;&#10;Sideboard&#10;2 Duress">${esc(s.deckText)}</textarea>
+      <label><input type="checkbox" data-k="deckSideboard" ${s.deckSideboard ? 'checked' : ''}> Include the sideboard</label>
+      <label><input type="checkbox" data-k="deckSkipBasics" ${s.deckSkipBasics ? 'checked' : ''}> Skip basic lands</label>
+      <p class="muted">${entries.length ? `${entries.length} different cards, ${entries.reduce((n, e) => n + e.quantity, 0)} in total. ` : ''}Any printing of each card, with your filters below. Export the list as text from Moxfield, Archidekt, MTGGoldfish, MTGTop8, Arena or MTGO.</p>`;
+  }
+
   function viewSetup() {
     const s = st.settings;
     const sel = new Set(s.sellerCountries);
@@ -154,11 +171,12 @@ export function mount() {
       .filter((c) => !q || sel.has(c.id) || c.name.toLowerCase().includes(q));
     const shipCodes = ['default', ...COUNTRIES.filter((c) => sel.has(c.id)).map((c) => c.code)];
     return `
-    <section><h2>Wants list</h2>
-      <select data-k="list">${st.lists.length ? '' : `<option value="${esc(st.listUrl)}">${st.listUrl ? 'This wants list' : 'Loading lists…'}</option>`}
-        ${st.lists.map((l) => `<option value="${esc(l.url)}" ${l.url === st.listUrl ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
-      </select>
-      ${st.wants ? `<p class="muted">${st.wants.length} entries loaded${st.wants.some((w) => w.offers) ? ', offers fetched' : ''}.</p>` : ''}
+    <section><h2>What to buy</h2>
+      <div class="chips" style="margin-bottom:10px">
+        <button class="chip ${s.source !== 'deck' ? 'on' : ''}" data-source="wants">A wants list</button>
+        <button class="chip ${s.source === 'deck' ? 'on' : ''}" data-source="deck">A decklist</button>
+      </div>
+      ${s.source === 'deck' ? viewDeck(s) : viewWantsPicker()}
     </section>
     <section><h2>Seller countries (allow list)</h2>
       <input type="text" placeholder="Filter countries…" data-k="countryFilter" value="${esc(st.countryFilter)}">
@@ -394,7 +412,10 @@ export function mount() {
 
   // ---------- actions ----------
   async function run() {
-    if (!st.listUrl) { alert('Pick a wants list first.'); return; }
+    const deckMode = st.settings.source === 'deck';
+    const deck = deckMode ? parseDecklist(st.settings.deckText, { includeSideboard: st.settings.deckSideboard, skipBasics: st.settings.deckSkipBasics }) : [];
+    if (deckMode && !deck.length) { st.log = ['Paste a decklist first (Setup → What to buy).']; st.tab = 'run'; render(); return; }
+    if (!deckMode && !st.listUrl) { st.log = ['Pick a wants list first.']; st.tab = 'run'; render(); return; }
     st.running = true; st.tab = 'run'; st.log = []; st.progress = 0;
     render();
     const s = st.settings;
@@ -406,18 +427,30 @@ export function mount() {
     fetcher.stopped = false;
     fetcher.requests = 0;
     try {
-      log('Reading wants list…');
-      const wants = await loadWantsList(fetcher, st.listUrl, log);
-      if (!wants.length) throw new Error('The wants list looks empty (or the page layout changed).');
-      log(`${wants.length} entries, ${wants.reduce((n, w) => n + w.quantity, 0)} cards.`);
-      st.wants = wants;
-      await collectOffers(fetcher, wants, s, (i, n, w) => {
+      let wants;
+      const progress = (i, n, w) => {
         setProgress(i / n, w ? `${i + 1}/${n} · ${w.name}` : 'Optimizing…');
         if (i > 0) log(describeWant(wants[i - 1]));
-      });
+      };
+      if (deckMode) {
+        wants = deckWants(deck, game());
+        log(`Decklist: ${wants.length} different cards, ${wants.reduce((n, w) => n + w.quantity, 0)} in total.`);
+        st.wants = wants;
+        await collectDeck(fetcher, wants, s, game(), progress, log);
+      } else {
+        log('Reading wants list…');
+        wants = await loadWantsList(fetcher, st.listUrl, log);
+        if (!wants.length) throw new Error('The wants list looks empty (or the page layout changed).');
+        log(`${wants.length} entries, ${wants.reduce((n, w) => n + w.quantity, 0)} cards.`);
+        st.wants = wants;
+        await collectOffers(fetcher, wants, s, progress);
+      }
       if (wants.every((w) => !w.offers.length)) log('⚠ No card got any offers. Tap "Copy debug report" below and send it, so the page reading can be fixed.');
       const opts = optOptions();
-      const scan = shouldScanSellers(wants, s.scanMode || 'auto');
+      // The seller scan filters sellers' stock by a Cardmarket wants list,
+      // which a pasted deck does not have.
+      const scan = deckMode ? { run: false, reason: 'deck' } : shouldScanSellers(wants, s.scanMode || 'auto');
+      if (scan.reason === 'deck' && wants.some((w) => w.truncated)) log('Some card pages held back offers. The seller scan needs a Cardmarket wants list: import the deck into one (Wants → Add decklist) to use it.');
       if (scan.reason === 'complete') log('Every card page showed all its offers: seller scan not needed.');
       if (scan.reason === 'truncated') log(`${scan.cut} card page(s) held back offers: scanning sellers for hidden copies.`);
       if (scan.run && s.scanSellers > 0) {
@@ -502,8 +535,8 @@ export function mount() {
     const pick = (w) => w && { name: w.name, url: w.url, kind: w.kind, quantity: w.quantity, languages: w.languages, minCondition: w.minCondition, flags: w.flags, maxPrice: w.maxPrice, expansion: w.expansion };
     return JSON.stringify({
       tool: 'cmopt', at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
-      settings: { sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
-      wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length,
+      settings: { source: s.source, sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
+      wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length, notFound: wants.filter((w) => w.notFound).map((w) => w.name),
       firstWants: wants.slice(0, 3).map(pick),
       wantsRowHtml: wants[0]?.rowHtml,
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
@@ -600,6 +633,12 @@ export function mount() {
     const t = e.target.closest('button, [data-tab]');
     if (!t) return;
     if (t.dataset.tab) { st.tab = t.dataset.tab; render(); return; }
+    if (t.dataset.source) {
+      update({ source: t.dataset.source });
+      st.wants = null; st.result = null;
+      render();
+      return;
+    }
     if (t.dataset.country) {
       const id = Number(t.dataset.country);
       const set = new Set(st.settings.sellerCountries);
@@ -707,7 +746,8 @@ export function mount() {
     if (!k || k === 'countryFilter') return;
     if (k === 'list') { st.listUrl = t.value; st.wants = null; st.result = null; render(); return; }
     if (k === 'sellerTypes') { update({ sellerTypes: t.value ? t.value.split(',').map(Number) : [] }); return; }
-    if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting') render(); }
+    if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting' || k.startsWith('deck')) render(); }
+    else if (k === 'deckText') { update({ deckText: t.value }); st.wants = null; render(); }
     else if (t.type === 'number' || ['minCondition', 'minRating'].includes(k)) update({ [k]: Number(t.value) || 0 });
     else update({ [k]: t.value });
   });

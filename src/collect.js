@@ -431,12 +431,12 @@ function sellerPageDiag(doc, url, listId) {
 
 // ---- Looking up one card by name (for "Add a card") ----
 
-const slugOf = (name) => String(name).normalize('NFD').replace(/[̀-ͯ]/g, '')
+export const slugOf = (name) => String(name).normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/['’,.:!?]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 // A name or a pasted Cardmarket link -> { name, url } of the card's
 // all-printings page (or one printing's page if that is all there is).
-export async function findCard(fetcher, query, game = 'Magic') {
+export async function findCard(fetcher, query, game = 'Magic', { searchOnly = false } = {}) {
   const q = String(query || '').trim();
   if (!q) return null;
   const asPath = q.match(/cardmarket\.com(\/[^\s?#]+)/)?.[1] || (q.startsWith('/') ? q : '');
@@ -450,7 +450,7 @@ export async function findCard(fetcher, query, game = 'Magic') {
   }
   // Cardmarket names card pages after the card: /<lang>/<game>/Cards/Tinder-Wall.
   const direct = `/en/${game}/Cards/${slugOf(q)}`;
-  const doc = await fetcher.doc(direct);
+  const doc = searchOnly ? null : await fetcher.doc(direct);
   if (doc && (doc.querySelector('.article-row') || doc.querySelector('a[href*="/Products/Singles/"]'))) {
     return { name: titleOf(doc) || q, url: direct };
   }
@@ -466,4 +466,36 @@ export async function findCard(fetcher, query, game = 'Magic') {
   const product = await fetcher.doc(href);
   const card = product && cardLinkOf(product);
   return { name: hit.textContent.trim(), url: card ? toEnglish(card) : href };
+}
+
+// ---- Decklists ----
+
+// Deck entries ({ name, quantity }) as wants for any printing of each card,
+// at the card's page named after it (/<lang>/<game>/Cards/<Name-Slug>).
+export const deckWants = (entries, game = 'Magic') => entries.map((e, i) => ({
+  idWant: `deck:${i}`, name: e.name, url: `/en/${game}/Cards/${slugOf(e.name)}`, kind: 'card',
+  quantity: e.quantity, languages: [], minCondition: 0, flags: {}, maxPrice: 0, expansion: '',
+}));
+
+// Offers for a deck. Cards whose page is not at the guessed address are
+// looked up with the site search (and by the front face of a double-faced
+// card) and read again; any still not found are marked notFound.
+export async function collectDeck(fetcher, wants, settings, game = 'Magic', progress, log) {
+  await collectOffers(fetcher, wants, settings, progress);
+  for (const w of wants) {
+    if (!w.diag?.pages?.[0]?.missing) continue;
+    const front = w.name.split(/\s*\/\/\s*/)[0];
+    const card = await findCard(fetcher, w.name, game, { searchOnly: true })
+      || (front !== w.name ? await findCard(fetcher, front, game) : null);
+    if (card) {
+      w.url = card.url;
+      w.kind = /\/Cards\//.test(card.url) ? 'card' : 'product';
+      await collectOffers(fetcher, [w], settings);
+      log?.(`${w.name}: found as ${card.name}, ${w.offers.length} offer(s)`);
+    } else {
+      w.notFound = true;
+      log?.(`${w.name}: not found on Cardmarket`);
+    }
+  }
+  return wants;
 }

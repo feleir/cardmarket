@@ -153,7 +153,8 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', ...settings });
   // Run exactly what a user pastes: decode the javascript: URL the way the browser does.
   await page.addScriptTag({ content: decodeURIComponent(bm.replace(/^javascript:/, '')) });
-  await page.waitForSelector('#cmopt-root option:has-text("Mono Red")', { state: 'attached' });
+  const deck = settings.source === 'deck';
+  await page.waitForSelector(deck ? '#cmopt-root textarea[data-k="deckText"]' : '#cmopt-root option:has-text("Mono Red")', { state: 'attached' });
   await page.screenshot({ path: `e2e-out/${name}-1-setup.png` });
   await page.click('#cmopt-root >> text=Fetch offers & optimize');
   await page.waitForSelector('#cmopt-root >> text=Total (estimated)', { timeout: 90000 });
@@ -163,11 +164,11 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   const fail = (msg) => { console.error(`FAIL [${name}]:`, msg, '\n', text); process.exitCode = 1; };
   if (/cheap_de/.test(text)) fail('a German seller got through the Switzerland-only filter');
   if (!text.includes(expectTotal)) fail(`expected the optimal total of ${expectTotal}`);
-  if (!/Black Lotus/.test(text)) fail('missing card not reported');
+  if (!deck && !/Black Lotus/.test(text)) fail('missing card not reported');
   const log = await page.locator('#cmopt-root .log').innerText().catch(() => '');
-  if (log && !/Black Lotus: 0 offer\(s\) \(1 page\(s\), 0 offer rows, 0 read\)/.test(log)) fail('no diagnostics for a card without offers');
+  if (!deck && log && !/Black Lotus: 0 offer\(s\) \(1 page\(s\), 0 offer rows, 0 read\)/.test(log)) fail('no diagnostics for a card without offers');
   if (!requested.some((r) => r.includes('sellerCountry=4'))) fail('country filter not sent');
-  await extraChecks?.({ page, text, requested, fail });
+  await extraChecks?.({ page, text, log, requested, fail });
   console.log(`--- ${name}: ${requested.length} requests ---\n${requested.join('\n')}\n--- results ---\n${text}\n`);
   await ctx.close();
 }
@@ -232,4 +233,22 @@ await scenario('cut-off+exact', { scanMode: 'auto', exact: true }, '73,60 €', 
   if (!/Proven optimal by the exact solver/.test(text)) fail('exact solver result not used');
   if (!/Cheaper: 0,60 € at zurich_cards. Taking 3 copies there/.test(text)) fail('bundling explanation missing');
 }, [`${P}/Ice-Age/Counterspell`]);
+// A pasted decklist instead of a wants list: set codes and basics dropped,
+// any printing of each card. 3 Bolts and a Tinder Wall from zurich_cards
+// (2,10 + 1,83) and 1 Bolt from geneva_tcg (0,80 + 1,83) = 6,56 €; an
+// unknown card is looked up with the search and reported as not found.
+await scenario('decklist', {
+  source: 'deck', scanMode: 'auto',
+  deckText: '4 Lightning Bolt (M10) 146\n1 Tinder Wall\n20 Mountain\n\n1 Made Up Card',
+}, '6,56 €', async ({ text, log, requested, fail }) => {
+  if (!requested.some((r) => r.startsWith('/en/Magic/Cards/Lightning-Bolt'))) fail('deck card page not read');
+  if (requested.some((r) => r.includes('Mountain'))) fail('basic land not skipped');
+  if (requested.some((r) => r.includes('/Users/'))) fail('seller scan ran for a decklist');
+  if (!/Made Up Card/.test(text)) fail('unknown card not reported as missing');
+  if (!requested.some((r) => r.includes('Products/Search?searchString=Made%20Up%20Card'))) fail('unknown card not searched for');
+  if (log && !/Made Up Card: not found on Cardmarket/.test(log)) fail('unknown card not logged');
+  const bolts = [...text.matchAll(/(\d+)× Lightning Bolt/g)].reduce((n, m) => n + Number(m[1]), 0);
+  if (bolts !== 4) fail(`expected 4 Bolts, got ${bolts}`);
+  if (!/Tinder Wall/.test(text)) fail('Tinder Wall not bought');
+});
 await browser.close();
