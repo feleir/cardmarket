@@ -263,9 +263,24 @@ await scenario('decklist', {
   if (!/1 card\(s\) in mixed printings/.test(opts)) fail('options: mixed printings not noted');
   await page.click('#cmopt-root [data-option="1"]');
   const one = await page.locator('#cmopt-root main').innerText();
-  if (!/Sellers \/ parcels\s*1\b/.test(one) || !/Mixed printings: Lightning Bolt \(Magic 2010, Alpha\)/.test(one)) fail(`switching to the 1-parcel cart: ${one.slice(0, 600)}`);
+  if (!/Sellers \/ parcels\s*1\b/.test(one) || !/In this cart: 3× Magic 2010, 1× Alpha/.test(one)) fail(`switching to the 1-parcel cart: ${one.slice(0, 600)}`);
   await page.screenshot({ path: 'e2e-out/decklist-3-options.png' });
   await page.click('#cmopt-root [data-option="0"]');
   if (!(await page.locator('#cmopt-root main').innerText()).includes('6,56 €')) fail('could not switch back to the cheapest cart');
+  // Printings, per card: choosing Alpha leaves 3 Bolts unbought (1 copy on offer).
+  const sel = page.locator('#cmopt-root select[data-printing]');
+  if ((await sel.count()) !== 1) fail(`expected a printing choice for Lightning Bolt only, got ${await sel.count()}`);
+  else {
+    const choices = await sel.evaluate((el) => [...el.options].map((o) => o.textContent).join(' | '));
+    if (!/Alpha · from 150,00 € · 1 copy \(not enough\)/.test(choices)) fail(`printing choices: ${choices}`);
+    await page.locator('#cmopt-root summary:has-text("Printings")').dispatchEvent('click'); // closed: nothing mixed in this cart
+    await sel.selectOption('p:alpha');
+    await page.waitForFunction(() => !/Re-planning/.test(document.querySelector('#cmopt-root').shadowRoot.querySelector('main').innerText), null, { timeout: 30000 });
+    const alpha = await page.locator('#cmopt-root main').innerText();
+    if (!/In this cart: 1× Alpha/.test(alpha) || !/Not found[\s\S]*3× Lightning Bolt/.test(alpha)) fail(`choosing Alpha: ${alpha.slice(0, 900)}`);
+    await page.screenshot({ path: 'e2e-out/decklist-4-printing.png', fullPage: true });
+    await page.locator('#cmopt-root select[data-printing]').selectOption('');
+    await page.waitForFunction(() => /6,56 €/.test(document.querySelector('#cmopt-root').shadowRoot.querySelector('main').innerText), null, { timeout: 30000 }).catch(() => fail('back to "As in Setup" did not restore 6,56 €'));
+  }
 });
 await browser.close();

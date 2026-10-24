@@ -10,7 +10,7 @@ import { parseDecklist } from './deck.js';
 import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
 import { planOptions } from './options.js';
-import { optimize } from './optimizer.js';
+import { optimize, printingOf } from './optimizer.js';
 import { addAll, cartLog, siteCartCode } from './cart.js';
 
 const KEY = 'cmopt:settings';
@@ -114,6 +114,7 @@ export function mount() {
     options: null,      // other carts to choose from: [{ kind, result }]
     optionsBusy: false,
     optionsRun: 0,
+    replanning: false,
     cartMsg: null,
     adding: false,
   };
@@ -352,7 +353,7 @@ export function mount() {
       await collectOffers(fetcher, [want], s);
       if (!want.offers.length) throw new Error(`No offers for ${card.name} with your filters (countries, condition, language).`);
       x.want = want;
-      x.plan = planExtra(st.result, (st.wants || []).filter((w) => w.offers), want, optOptions());
+      x.plan = planExtra(st.result, solveWants(), want, optOptions());
       x.msg = `${card.name}: ${want.offers.length} offer(s) found.`;
     } catch (e) {
       x.msg = e instanceof BlockedError ? e.message : e.message || String(e);
@@ -361,10 +362,58 @@ export function mount() {
     render();
   }
 
+  // A card's printings among its offers: [{ key, name, from, copies }], cheapest first.
+  function printingsOf(w) {
+    const by = new Map();
+    for (const o of w.offers || []) {
+      if (!(o.price > 0)) continue;
+      const key = printingOf(o);
+      const p = by.get(key) || { key, name: o.expansion || 'Unknown printing', from: Infinity, copies: 0 };
+      p.from = Math.min(p.from, o.price);
+      p.copies += Math.max(1, o.available | 0);
+      by.set(key, p);
+    }
+    return [...by.values()].sort((a, b) => a.from - b.from);
+  }
+
+  function viewPrintings() {
+    const r = st.result;
+    const keyOf = (w) => w.idWant || w.name;
+    // What this cart buys of each card, per printing.
+    const bought = new Map();
+    for (const g of r.groups) for (const it of g.items) {
+      const m = bought.get(keyOf(it.want)) || new Map();
+      const n = it.offer.expansion || 'Unknown printing';
+      m.set(n, (m.get(n) || 0) + it.quantity);
+      bought.set(keyOf(it.want), m);
+    }
+    const cards = (st.wants || []).map((w, i) => ({ w, i, ps: printingsOf(w), got: bought.get(keyOf(w)) || new Map() }))
+      .filter((x) => x.ps.length > 1);
+    if (!cards.length) return '';
+    const mixedN = cards.filter((x) => x.got.size > 1).length;
+    cards.sort((a, b) => (b.got.size > 1) - (a.got.size > 1) || !!b.w.printingChoice - !!a.w.printingChoice);
+    const setup = st.settings.samePrinting ? 'As in Setup (one printing unless mixing saves enough)' : 'As in Setup (cheapest, may mix)';
+    return `<details class="card" ${mixedN || cards.some((x) => x.w.printingChoice) ? 'open' : ''}>
+      <summary><b>Printings</b> · ${cards.length} card(s) on offer in several printings${mixedN ? `, <span class="warn">${mixedN} mixed in this cart</span>` : ''}</summary>
+      <p class="muted">Per card: the cheapest mix, one printing (whichever makes the cart cheapest), or a printing you choose. The cart is re-planned from the offers already loaded.</p>
+      ${st.replanning ? '<p class="muted">Re-planning…</p>' : ''}
+      ${cards.map(({ w, i, ps, got }) => `<div class="item"><div class="t">
+        <b>${w.quantity}× ${esc(w.name)}</b>${got.size > 1 ? ' <span class="warn">mixed</span>' : ''}
+        <div class="muted">In this cart: ${got.size ? [...got].map(([n, k]) => `${k}× ${esc(n)}`).join(', ') : 'none'}</div>
+        <select data-printing="${i}" ${st.replanning ? 'disabled' : ''}>
+          <option value="">${setup}</option>
+          <option value="mix" ${w.printingChoice === 'mix' ? 'selected' : ''}>Cheapest, printings may mix</option>
+          <option value="same" ${w.printingChoice === 'same' ? 'selected' : ''}>One printing, whichever is cheapest</option>
+          ${ps.map((p) => `<option value="p:${esc(p.key)}" ${w.printingChoice === `p:${p.key}` ? 'selected' : ''}>${esc(p.name)} · from ${money(p.from)} · ${p.copies} cop${p.copies === 1 ? 'y' : 'ies'}${p.copies < w.quantity ? ' (not enough)' : ''}</option>`).join('')}
+        </select></div></div>`).join('')}
+    </details>`;
+  }
+
   function viewOptions() {
     if (st.optionsBusy) return '<div class="card"><b>Other options</b><p class="muted">Working out carts with fewer parcels…</p></div>';
     const rows = st.options;
     if (!rows) return '';
+    if (rows.length < 2 && rows[0].result.groups.length < 2) return '';
     if (rows.length < 2) return '<div class="card"><b>Other options</b><p class="muted">No cart with fewer parcels can supply every card, and none is worth showing beside this one.</p></div>';
     const base = rows[0].result;
     const noteOf = (row) => {
@@ -418,7 +467,7 @@ export function mount() {
       <textarea id="cmopt-cartdata" readonly hidden></textarea>
     </div>
     <div id="cmopt-options">${viewOptions()}</div>
-    ${r.mixed?.length ? `<p class="muted">Mixed printings: ${r.mixed.map((m) => `${esc(m.name)} (${m.printings.map(esc).join(', ')})`).join('; ')}.</p>` : ''}
+    ${viewPrintings()}
     ${viewExtra()}
     ${r.groups.map((g, gi) => `
       <div class="card">
@@ -633,9 +682,32 @@ export function mount() {
     return r;
   }
 
+  // The wants as the optimizer sees them, with each card's printing choice
+  // from the Results screen: '' as in Setup, 'mix', 'same' or 'p:<printing>'.
+  const solveWants = () => (st.wants || []).filter((w) => w.offers).map((w) => {
+    const c = w.printingChoice || '';
+    if (c === 'mix') return { ...w, mixPenalty: 0 };
+    if (c === 'same') return { ...w, mixPenalty: 1000 };
+    if (c.startsWith('p:')) return { ...w, offers: w.offers.filter((o) => printingOf(o) === c.slice(2)) };
+    return w;
+  });
+
+  // Re-plan after a printing choice, from the offers already loaded.
+  async function replan() {
+    st.replanning = true;
+    render();
+    try {
+      st.result = await solve(solveWants(), optOptions(), { quiet: true });
+    } finally {
+      st.replanning = false;
+    }
+    st.extra = { ...st.extra, plan: null, msg: '' };
+    render();
+    findOptions();
+  }
+
   async function reoptimize() {
-    const wants = (st.wants || []).filter((w) => w.offers);
-    st.result = await solve(wants, optOptions());
+    st.result = await solve(solveWants(), optOptions());
     st.running = false;
     st.tab = 'results';
     render();
@@ -650,7 +722,7 @@ export function mount() {
     st.options = null;
     st.optionsBusy = true;
     paintOptions();
-    const wants = (st.wants || []).filter((w) => w.offers);
+    const wants = solveWants();
     const opts = { ...optOptions(), timeBudgetMs: Math.min(1500, st.settings.timeBudgetMs) };
     try {
       const rows = await planOptions(wants, opts, best,
@@ -826,6 +898,11 @@ export function mount() {
 
   shadow.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.dataset.printing) {
+      st.wants[Number(t.dataset.printing)].printingChoice = t.value;
+      replan();
+      return;
+    }
     if (t.dataset.ship) {
       const tiers = parseTiers(t.value);
       if (tiers.length) update({ shipping: { ...st.settings.shipping, [t.dataset.ship]: tiers } });

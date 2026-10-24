@@ -54,23 +54,23 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
     obj.push(`${BIG} m${wi}`);
     cons.push(` w${wi}: ${[...vs, `m${wi}`].join(' + ')} = ${Math.max(0, w.quantity | 0)}`);
   });
-  if (Number(mixPenalty) > 0) {
-    wants.forEach((w, wi) => {
-      const byPrinting = new Map();
-      for (const x of vars) if (x.wi === wi) {
-        const e = printingOf(x.o);
-        if (!byPrinting.has(e)) byPrinting.set(e, []);
-        byPrinting.get(e).push(x.v);
-      }
-      if (byPrinting.size < 2) return;
-      [...byPrinting.values()].forEach((vs, ei) => {
-        const y = `y${wi}_${ei}`;
-        obj.push(`${Number(mixPenalty)} ${y}`);
-        bins.push(y);
-        cons.push(` p${wi}_${ei}: ${vs.join(' + ')} - ${Math.max(1, w.quantity | 0)} ${y} <= 0`);
-      });
+  wants.forEach((w, wi) => {
+    const pen = Number(w.mixPenalty ?? mixPenalty) || 0;
+    if (!(pen > 0)) return;
+    const byPrinting = new Map();
+    for (const x of vars) if (x.wi === wi) {
+      const e = printingOf(x.o);
+      if (!byPrinting.has(e)) byPrinting.set(e, []);
+      byPrinting.get(e).push(x.v);
+    }
+    if (byPrinting.size < 2) return;
+    [...byPrinting.values()].forEach((vs, ei) => {
+      const y = `y${wi}_${ei}`;
+      obj.push(`${pen} ${y}`);
+      bins.push(y);
+      cons.push(` p${wi}_${ei}: ${vs.join(' + ')} - ${Math.max(1, w.quantity | 0)} ${y} <= 0`);
     });
-  }
+  });
   let ai = 0;
   for (const a of articles.values()) {
     if (a.vs.length > 1) cons.push(` a${ai++}: ${a.vs.join(' + ')} <= ${a.cap}`);

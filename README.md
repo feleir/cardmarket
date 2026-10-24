@@ -62,6 +62,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - The total, split into cards and estimated shipping.
    - A comparison with "cheapest copy of every card".
    - Your order grouped by seller, plus a list of cards that couldn't be found.
+   - **Printings**: every card on offer in several printings, with what this cart buys of each. Per card, choose the cheapest mix, one printing (whichever makes the cart cheapest), or a specific printing (with its lowest price and copies on offer); the cart is re-planned at once from the offers already loaded.
    - **Other options**: after the cheapest cart, the best cart for each smaller number of parcels (worked out in the background from the offers already loaded, with the exact solver too when it's on), and, if the cheapest mixes printings of a card, a cart with one printing per card. Each shows its total and how much more it costs than the cheapest; **Use** switches to it, and the cart buttons then work on that cart. Cards in mixed printings are listed under the totals.
    - **Add**, **Add all from seller** and **Add all to cart** buttons, and **Copy list**. **Add all** skips what is already in the cart, so it can be run again safely.
    - For each card, the best single seller for all its copies and what that would change in the total.

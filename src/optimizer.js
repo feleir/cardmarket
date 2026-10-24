@@ -45,7 +45,8 @@ export function optimize(wants, opts = {}) {
   // Cardmarket adds on top; with vatInParcelValue, the price with VAT.
   // Keeping the copies of a card in one printing: every extra printing a
   // card's copies come from counts this much when choosing.
-  const mixPenalty = Number(opts.mixPenalty) || 0;
+  // A want's own mixPenalty (set from the Results screen) overrides it.
+  const mixOf = wants.map((w) => Number(w.mixPenalty ?? opts.mixPenalty) || 0);
   const tvOf = (o) => (opts.vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice);
 
   // Flatten into indexed arrays so the hot loops avoid object lookups.
@@ -136,7 +137,7 @@ export function optimize(wants, opts = {}) {
       if (limitOn && maxSellers && open >= maxSellers) return Infinity;
     }
     return o.cost + ship(o.s, n + 1, sV[o.s] + o.tv) - ship(o.s, n, sV[o.s])
-      + (mixPenalty && pN[o.e] === 0 && wP[o.w] > 0 ? mixPenalty : 0);
+      + (mixOf[o.w] && pN[o.e] === 0 && wP[o.w] > 0 ? mixOf[o.w] : 0);
   };
   const bestFor = (u, forbid, noise = 0) => {
     let best = -1;
@@ -154,7 +155,7 @@ export function optimize(wants, opts = {}) {
     let t = 0;
     for (let u = 0; u < units.length; u++) if (assign[u] >= 0) t += offers[assign[u]].cost;
     for (let s = 0; s < S; s++) t += ship(s, sN[s], sV[s]);
-    if (mixPenalty) for (let w = 0; w < wants.length; w++) if (wP[w] > 1) t += (wP[w] - 1) * mixPenalty;
+    for (let w = 0; w < wants.length; w++) if (wP[w] > 1) t += (wP[w] - 1) * mixOf[w];
     return t;
   };
   const missing = () => { let m = 0; for (let u = 0; u < units.length; u++) if (assign[u] < 0) m++; return m; };
@@ -551,12 +552,12 @@ export function optimize(wants, opts = {}) {
   // The change in the printing penalty for card wi when copies move between
   // its printings: changes = [[pair index, +/- copies]].
   function mixChange(wi, changes) {
-    if (!mixPenalty) return 0;
+    if (!mixOf[wi]) return 0;
     const n = new Map();
     for (const [e, k] of changes) n.set(e, (n.get(e) ?? pN[e]) + k);
     let p = wP[wi];
     for (const [e, k] of n) p += (k > 0 ? 1 : 0) - (pN[e] > 0 ? 1 : 0);
-    return (Math.max(0, p - 1) - Math.max(0, wP[wi] - 1)) * mixPenalty;
+    return (Math.max(0, p - 1) - Math.max(0, wP[wi] - 1)) * mixOf[wi];
   }
 
   function summarize() {

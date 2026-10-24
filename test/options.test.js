@@ -66,3 +66,18 @@ test('options: offers a one-printing cart when the cheapest mixes printings', as
   assert.ok(matched);
   assert.equal(picks(matched.result), '4xMasters 25');
 });
+
+test('a card can keep one printing while others may mix', async () => {
+  // Two cards with the same mixed offers; only the first must keep one printing.
+  const wants = [{ ...bolts()[0], mixPenalty: 1000 }, { ...bolts()[0], name: 'Bolt again', offers: [
+    offer('c', 'zurich', 0.5, 2, 'Magic 2010'), offer('d', 'zurich', 0.55, 4, 'Masters 25'),
+  ] }];
+  const r = optimize(wants, { shipping, timeBudgetMs: 200 });
+  assert.deepEqual(r.mixed.map((m) => m.name), ['Bolt again']);
+  const ex = solveWith(await highs(), wants, { shipping });
+  assert.deepEqual(ex.picks[0], [{ id: 'b', count: 4 }]);
+  assert.equal(ex.picks[1].length, 2);
+  // And a per-card 0 overrides a global penalty.
+  const r2 = optimize([{ ...bolts()[0], mixPenalty: 0 }], { shipping, timeBudgetMs: 200, mixPenalty: 1000 });
+  assert.equal(r2.mixed.length, 1);
+});
