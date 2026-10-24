@@ -260,6 +260,16 @@ export function mount() {
     return `<div class="muted">${head} = ${w.delta < 0.005 ? 'same total' : `+${money(w.delta)} overall`}, so it stays here.</div>`;
   }
 
+  // The best single seller for all copies of this card, and what that would
+  // change in the total.
+  function oneSellerNote(it) {
+    const a = it.allFromOne;
+    if (!a || a.copies < 2) return '';
+    const what = `All ${a.copies} from ${esc(a.seller)}${a.inCart ? ' (already in the cart)' : ''}`;
+    if (a.delta < -0.005) return `<div class="warn">${what}: saves ${money(-a.delta)} (missed saving).</div>`;
+    return `<div class="muted">${what}: ${a.delta < 0.005 ? 'same total' : `+${money(a.delta)} overall`}, shipping and VAT included.</div>`;
+  }
+
   function cartButton(it, gi, ii) {
     const state = st.cartState.get(it.offer.id);
     if (state === 'added') return '<span class="ok">In cart ✓</span>';
@@ -355,7 +365,7 @@ export function mount() {
         ${g.items.map((it, ii) => `<div class="item">
           <div class="t"><a href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">${it.quantity}× ${esc(it.want.name)}</a>
             <div class="muted">${esc(it.offer.expansion)} · ${esc(langName(it.offer.language))} · ${esc(condCode(it.offer.condition))}${it.offer.isFoil ? ' · Foil' : ''}${it.offer.otherPrinting ? ` · <b>other printing</b> (list: ${esc(it.want.expansion)})` : ''}${it.offer.vat ? ` · incl. ${it.offer.vat}% VAT` : ''}${it.offer.comment ? ' · ' + esc(it.offer.comment) : ''}</div>
-            ${switchNote(it)}</div>
+            ${switchNote(it)}${oneSellerNote(it)}</div>
           <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
         <p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>
@@ -495,6 +505,9 @@ export function mount() {
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
       unreadOffer: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unreadOffer,
       log: st.log.slice(-40),
+      result: st.result && { total: st.result.total, shipping: st.result.shippingCost, exact: st.result.exact || '',
+        groups: st.result.groups.map((g) => ({ seller: g.seller, cards: g.cards, value: g.value, shipping: g.shipping, trackedOnly: !!g.info.trackedOnly,
+          items: g.items.map((it) => `${it.quantity}x ${it.want.name} ${it.offer.price}${it.offer.vat ? ` (incl ${it.offer.vat}% VAT)` : ''}${it.allFromOne ? ` | all from ${it.allFromOne.seller}: ${it.allFromOne.delta}` : ''}`) })) },
       cart: cartLog.slice(-14),
       siteCart: st.cartMsg && !st.cartMsg.ok ? siteCartCode() : undefined,
       sellerScan: st.scanDiag,

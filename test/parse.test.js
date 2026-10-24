@@ -276,3 +276,30 @@ test('any printing: a want for one printing also gets offers for its other print
   // A seller-scan offer of another printing now matches too.
   assert.equal(matchWants({ productUrl: `${P}/Dominaria-Remastered/Aquamoeba`, name: 'Aquamoeba' }, [want]).length, 1);
 });
+
+test('a page that holds back offers is read again per seller type', async () => {
+  const { collectOffers } = await import('../src/collect.js');
+  const P = '/en/Magic/Products/Singles';
+  const full = productPage({ title: 'Elvish Champion', expansion: 'Eighth Edition', rows: [offerRow({ id: 1, seller: 'a', price: '5,00 €' })] })
+    .replace('</body>', '<button class="btn">Show more results</button></body>');
+  const byType = { 0: [offerRow({ id: 2, seller: 'private1', price: '8,00 €', count: 3 })], 1: [offerRow({ id: 3, seller: 'pro1', price: '7,00 €' })], 2: [] };
+  const fetched = [];
+  const mem = new Map();
+  const fetcher = {
+    cached: (u) => mem.get(u), store: (u, v) => mem.set(u, v),
+    doc: async (u) => {
+      fetched.push(u);
+      const t = u.match(/sellerType=(\d)/)?.[1];
+      return doc(t == null ? full : productPage({ title: 'Elvish Champion', expansion: 'Eighth Edition', rows: byType[t] }));
+    },
+  };
+  const want = { idWant: '1', kind: 'product', name: 'Elvish Champion', url: `${P}/Eighth-Edition/Elvish-Champion`, quantity: 3, languages: [], minCondition: 5, flags: {} };
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS });
+  assert.deepEqual(fetched.map((u) => u.match(/sellerType=(\d)/)?.[1] ?? '-'), ['-', '0', '1', '2']);
+  assert.deepEqual(want.offers.map((o) => o.seller).sort(), ['a', 'private1', 'pro1']);
+  assert.equal(want.truncated, false); // every batch fit
+  // With a seller type chosen in the settings, no extra reads.
+  fetched.length = 0; mem.clear();
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, sellerTypes: [1] });
+  assert.equal(fetched.length, 1);
+});

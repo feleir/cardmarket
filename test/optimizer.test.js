@@ -163,3 +163,27 @@ test('add a card: fills existing parcels first, and compares with a full re-plan
   assert.equal(plan.fit.cost, 0.6);
   assert.equal(plan.replan.cost, 0.6);
 });
+
+test('all copies from one seller: shown with what it would change', async () => {
+  const { DEFAULT_SHIPPING } = await import('../src/constants.js');
+  const champion = (bundlePrice) => [{ key: 'ec', name: 'Elvish Champion', quantity: 3, offers: [
+    { id: 'a', seller: 'A', countryCode: 'CH', price: 6, available: 1 },
+    { id: 'b', seller: 'B', countryCode: 'CH', price: 6, available: 1 },
+    { id: 'c', seller: 'C', countryCode: 'CH', price: 6, available: 1 },
+    { id: 'z', seller: 'Z', countryCode: 'CH', price: bundlePrice, available: 3 }] }];
+  const first = (r) => r.groups.flatMap((g) => g.items).find((it) => it.allFromOne);
+
+  // 3 × 6 + 3 letters (23,49) beats 3 × 8 + 1 letter (25,83) by 2,34.
+  let r = optimize(champion(8), { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.equal(r.total, 23.49);
+  assert.deepEqual(first(r).allFromOne, { seller: 'Z', copies: 3, delta: 2.34, inCart: false });
+
+  // At 8,65 (8 € + 8,1 % VAT) the parcel is 25,95 €: tracked, 8,50.
+  r = optimize(champion(8.65), { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.equal(first(r).allFromOne.delta, 10.96);
+
+  // At 6,50 the single parcel wins and is chosen: 19,50 + 1,83 = 21,33.
+  r = optimize(champion(6.5), { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.equal(r.total, 21.33);
+  assert.equal(r.groups.length, 1);
+});

@@ -470,6 +470,60 @@ export function optimize(wants, opts = {}) {
     return best;
   }
 
+  // Taking every copy of card wi from a single seller instead: for each
+  // seller that has enough copies, the change in the total (card prices,
+  // the parcels the copies leave, the parcel they join). The best one, or
+  // null when no other seller can supply them all.
+  function allFromOne(wi) {
+    const mine = [];
+    for (let u = 0; u < units.length; u++) if (units[u] === wi && assign[u] >= 0) mine.push(u);
+    if (!mine.length) return null;
+    const curSellers = new Set(mine.map((u) => offers[assign[u]].s));
+    // Leaving: what each current parcel looks like without these copies.
+    const n = new Map();
+    const v = new Map();
+    let base = 0;
+    for (const u of mine) {
+      const o = offers[assign[u]];
+      n.set(o.s, (n.get(o.s) || 0) + 1);
+      v.set(o.s, (v.get(o.s) || 0) + o.price);
+      base += o.cost;
+    }
+    let leave = 0;
+    for (const [s0, k] of n) leave += ship(s0, sN[s0] - k, sV[s0] - v.get(s0)) - ship(s0, sN[s0], sV[s0]);
+    let best = null;
+    const bySeller = new Map();
+    for (const oj of wantOffers[wi]) {
+      const x = offers[oj];
+      if (!bySeller.has(x.s)) bySeller.set(x.s, []);
+      bySeller.get(x.s).push(oj);
+    }
+    for (const [t, list] of bySeller) {
+      if (curSellers.size === 1 && curSellers.has(t)) continue; // that is the current choice
+      // The copies this seller would supply: cheapest first, within stock
+      // (copies of this card it already supplies count as free again).
+      let need = mine.length;
+      let cost = 0;
+      let value = 0;
+      for (const oj of list) {
+        const x = offers[oj];
+        const ownHere = mine.filter((u) => assign[u] === oj).length;
+        const k = Math.min(need, arts[x.a] - used[x.a] + ownHere);
+        if (k <= 0) continue;
+        need -= k; cost += k * x.cost; value += k * x.price;
+        if (!need) break;
+      }
+      if (need) continue;
+      const stayN = (sN[t] || 0) - (n.get(t) || 0);
+      const stayV = (sV[t] || 0) - (v.get(t) || 0);
+      // leave already took t's parcel down to stayN/stayV; join takes it up.
+      const join = ship(t, stayN + mine.length, stayV + value) - ship(t, stayN, stayV);
+      const d = (cost - base) + leave + join;
+      if (!best || d < best.delta) best = { seller: sellers[t].name, copies: mine.length, delta: round(d), inCart: sN[t] > 0 };
+    }
+    return best;
+  }
+
   function summarize() {
     const bySeller = new Map();
     const missingByWant = new Map();
@@ -499,6 +553,16 @@ export function optimize(wants, opts = {}) {
       itemsCost += o.price;
     }
     for (const g of bySeller.values()) for (const it of g.items.values()) it.switch = switchCost(it.oi, it.quantity);
+    // On the first item of each card: the best seller for all its copies.
+    const seenWant = new Set();
+    for (const g of bySeller.values()) {
+      for (const it of g.items.values()) {
+        const wi = offers[it.oi].w;
+        if (seenWant.has(wi)) continue;
+        seenWant.add(wi);
+        it.allFromOne = allFromOne(wi);
+      }
+    }
     let shippingCost = 0;
     const groups = [...bySeller.entries()].map(([s, g]) => {
       const sh = ship(s, g.cards, g.value);

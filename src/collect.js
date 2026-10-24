@@ -131,6 +131,23 @@ async function offersAt(fetcher, url) {
   return v;
 }
 
+// A page that holds back offers shows only its cheapest batch. Reading it
+// once per seller type (private, professional, powerseller) gives up to three
+// batches, so sellers further down the list - who may have several copies
+// for one parcel - are seen too. Only when no seller type is chosen in the
+// settings. Returns whether offers may still be missing.
+async function deeper(fetcher, path, page, f, found, diag) {
+  if (!page.truncated || f.sellerTypes.length) return !!page.truncated;
+  let still = false;
+  for (const type of [0, 1, 2]) {
+    const part = await offersAt(fetcher, `${path}?${filterQuery({ ...f, sellerTypes: [type] })}`);
+    found.push(...part.offers);
+    diag.pages.push(part.diag);
+    still ||= !!part.truncated;
+  }
+  return still;
+}
+
 // Fills want.offers for every want. progress(i, n, want) is called per want.
 export async function collectOffers(fetcher, wants, settings, progress) {
   for (let i = 0; i < wants.length; i++) {
@@ -142,8 +159,8 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     let found = [];
     const page = await offersAt(fetcher, `${path}?${qs}`);
     found.push(...page.offers);
-    let truncated = !!page.truncated;
     const diag = { pages: [page.diag], versions: page.versions.length, rejected: {} };
+    let truncated = await deeper(fetcher, path, page, f, found, diag);
     // "Any printing" for a want that names one: add the card's
     // all-printings page (its offers come with their expansion).
     want.anyPrinting = !!settings.anyPrinting && want.kind === 'product';
@@ -153,8 +170,8 @@ export async function collectOffers(fetcher, wants, settings, progress) {
       if (cardPath) {
         cardPage = await offersAt(fetcher, `${cardPath}?${qs}`);
         found.push(...cardPage.offers);
-        truncated ||= !!cardPage.truncated;
         diag.pages.push(cardPage.diag);
+        truncated = (await deeper(fetcher, cardPath, cardPage, f, found, diag)) || truncated;
       }
     }
     // A card page that lists printings but no offers: visit the cheapest

@@ -62,6 +62,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - A comparison with "cheapest copy of every card".
    - Your order grouped by seller, plus a list of cards that couldn't be found.
    - **Add**, **Add all from seller** and **Add all to cart** buttons, and **Copy list**. **Add all** skips what is already in the cart, so it can be run again safely.
+   - For each card, the best single seller for all its copies and what that would change in the total.
    - For every item, what taking the cheaper copies from another seller would change in the total: card prices plus shipping on both sides (a new parcel, a parcel moving up or down a step). A negative number would be a missed saving.
    - **Add a card**: type a card name (or paste its Cardmarket link) and how many copies. You get the cheapest way to add them to the cart as planned: copies join parcels that already ship when that adds little or no shipping. You also get a full re-plan with the card included, for comparison. Buttons put the new copies in the Cardmarket cart, keep them in the plan, or switch to the re-planned cart.
    - **Copy cart data**: a compact JSON of the offers and the result; `node scripts/check-cart.mjs <file>` reruns it against the exact solver.
@@ -82,7 +83,7 @@ It respects each article's available quantity, and an article listed under two w
 
 Every card on the wants list is looked up on its card page with your filters, and every offer there, from every seller, goes into one pool. The optimizer buckets that pool by seller. That **card scan** is the main data source.
 
-The weak spot: a card page shows the cheapest batch of offers and holds the rest back behind "show more". A seller who has many of your cards, each a little above the cheapest, can be hidden on every one of those pages, and that is exactly the seller a single parcel could come from. So each card page is checked for being cut off (a "show more / load more" control, or a full batch of 50 rows).
+The weak spot: a card page shows the cheapest batch of offers and holds the rest back behind "show more". A page that is cut off is read again once per seller type (private, professional, powerseller), unless a seller type is set in the settings. That gives up to three batches, so sellers further down the list are seen too. A seller who has many of your cards, each a little above the cheapest, can be hidden on every one of those pages, and that is exactly the seller a single parcel could come from. So each card page is checked for being cut off (a "show more / load more" control, or a full batch of 50 rows).
 
 **Seller scan** (Setup → Optimizer → Seller scan):
 - **Auto** (default): if no card page was cut off, the card scan already saw every offer and nothing more is fetched. Typical with a single seller country. If some pages were cut off, it reads the whole stock of the top sellers (10 by default), **filtered by your wants list**, every page of it. "Top" means sellers who appeared for the most of your cards; cards whose page was cut off count double, plus everyone already in the cart.
