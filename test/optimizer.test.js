@@ -142,3 +142,24 @@ test('printing preference: another printing must save more than the premium', ()
   r = optimize(want(0.7), { shipping: flat, printingPremium: 0, timeBudgetMs: 20 });
   assert.equal(pick(r), 'other');
 });
+
+test('add a card: fills existing parcels first, and compares with a full re-plan', async () => {
+  const { planExtra } = await import('../src/extra.js');
+  const { DEFAULT_SHIPPING } = await import('../src/constants.js');
+  const wants = [
+    { key: 'a', name: 'A', quantity: 2, offers: [{ id: 'a1', seller: 'S1', countryCode: 'CH', price: 1, available: 2 }] },
+    { key: 'b', name: 'B', quantity: 1, offers: [{ id: 'b1', seller: 'S2', countryCode: 'CH', price: 2, available: 1 }] },
+  ];
+  const opts = { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 };
+  const result = optimize(wants, opts);
+  assert.equal(result.total, 4 + 2 * 1.83);
+  // Tinder Wall: 0,30 at S1 (in the cart, 2 cards there) vs 0,10 at a new seller.
+  const extra = { key: 'tw', name: 'Tinder Wall', quantity: 2, offers: [
+    { id: 't1', seller: 'S1', countryCode: 'CH', price: 0.3, available: 4 },
+    { id: 't2', seller: 'S3', countryCode: 'CH', price: 0.1, available: 4 }] };
+  const plan = planExtra(result, wants, extra, opts);
+  // Joining S1's parcel: 2 → 4 cards stays in the 1,83 € letter.
+  assert.deepEqual(plan.fit.items.map((i) => [i.seller, i.quantity, i.joins, i.shippingDelta]), [['S1', 2, true, 0]]);
+  assert.equal(plan.fit.cost, 0.6);
+  assert.equal(plan.replan.cost, 0.6);
+});

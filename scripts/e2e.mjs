@@ -52,6 +52,12 @@ const pages = {
     offerRow({ id: 33, seller: 'bigstore_ch', price: '1,00 €', count: 2 }),
   ] }),
   [`${P}/Alpha/Black-Lotus`]: productPage({ title: 'Black Lotus', expansion: 'Alpha', rows: [] }),
+  // For "Add a card": Tinder Wall's all-printings page.
+  '/en/Magic/Cards/Tinder-Wall': productPage({ title: 'Tinder Wall', expansion: '', rows: [
+    offerRow({ id: 50, seller: 'newseller', price: '0,10 €', count: 4, expansion: 'Stronghold', productUrl: `${P}/Stronghold/Tinder-Wall` }),
+    offerRow({ id: 51, seller: 'zurich_cards', price: '0,30 €', count: 4, expansion: 'Stronghold', productUrl: `${P}/Stronghold/Tinder-Wall` }),
+    offerRow({ id: 52, seller: 'geneva_tcg', price: '0,35 €', count: 4, expansion: 'Stronghold', productUrl: `${P}/Stronghold/Tinder-Wall` }),
+  ] }),
 };
 
 // bigstore_ch's own offers page; with the wants filter it lists only
@@ -203,6 +209,20 @@ await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ pag
   await idle();
   if (!/Cardmarket is showing its browser check/.test(await page.locator('#cmopt-root main').innerText())) fail('browser check not reported');
   checkPages = false;
+
+  // Add a card: 4 Tinder Walls. geneva_tcg's parcel is already tracked, so
+  // copies join it for no extra shipping (0,35 each); zurich_cards has 3
+  // cards, so 1 copy (0,30) fits its 4-card letter too, a 2nd would go up a
+  // step. Best: 3 × 0,35 + 1 × 0,30 = +1,35 € (a new seller: 0,40 + 1,83).
+  await page.fill('#cmopt-root #cmopt-extra-q', 'Tinder Wall');
+  await page.fill('#cmopt-root #cmopt-extra-n', '4');
+  await page.click('#cmopt-root >> text=Find the best way');
+  await page.waitForSelector('#cmopt-root >> text=Add to this cart', { timeout: 30000 }).catch(() => {});
+  const extraText = await page.locator('#cmopt-root main').innerText();
+  if (!/Add to this cart: \+1,35 €/.test(extraText)) fail('add a card: expected +1,35 €');
+  if (!/3× Tinder Wall[\s\S]*geneva_tcg: joins their parcel \(no extra shipping\)/.test(extraText)) fail('add a card: expected 3 to join geneva_tcg');
+  if (!/1× Tinder Wall[\s\S]*zurich_cards: joins their parcel \(no extra shipping\)/.test(extraText)) fail('add a card: expected 1 to join zurich_cards');
+  await page.screenshot({ path: 'e2e-out/complete-pages-4-add-card.png' });
 });
 
 // Everything from bigstore_ch in one tracked parcel: 60,50 + 2,00 + 2,60 + 8,50.

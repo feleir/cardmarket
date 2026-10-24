@@ -49,6 +49,7 @@ Updates: push a new `dist/cm-optimizer.js` to the branch in `config.cmoptUrl`. T
    - Your order grouped by seller, plus a list of cards that couldn't be found.
    - **Add**, **Add all from seller** and **Add all to cart** buttons, and **Copy list**. **Add all** skips what is already in the cart, so it can be run again safely.
    - For every item, what taking the cheaper copies from another seller would change in the total: card prices plus shipping on both sides (a new parcel, a parcel moving up or down a step). A negative number would be a missed saving.
+   - **Add a card**: type a card name (or paste its Cardmarket link) and how many copies. You get the cheapest way to add them to the cart as planned: copies join parcels that already ship when that adds little or no shipping. You also get a full re-plan with the card included, for comparison. Buttons put the new copies in the Cardmarket cart, keep them in the plan, or switch to the re-planned cart.
    - **Copy cart data**: a compact JSON of the offers and the result; `node scripts/check-cart.mjs <file>` reruns it against the exact solver.
 
 ## How the optimizer works

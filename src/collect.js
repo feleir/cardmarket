@@ -403,3 +403,42 @@ function sellerPageDiag(doc, url, listId) {
     })),
   };
 }
+
+// ---- Looking up one card by name (for "Add a card") ----
+
+const slugOf = (name) => String(name).normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/['’,.:!?]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+// A name or a pasted Cardmarket link -> { name, url } of the card's
+// all-printings page (or one printing's page if that is all there is).
+export async function findCard(fetcher, query, game = 'Magic') {
+  const q = String(query || '').trim();
+  if (!q) return null;
+  const asPath = q.match(/cardmarket\.com(\/[^\s?#]+)/)?.[1] || (q.startsWith('/') ? q : '');
+  const titleOf = (doc) => (doc.querySelector('h1')?.childNodes?.[0]?.textContent || doc.querySelector('h1')?.textContent || '').trim();
+  if (asPath) {
+    const url = toEnglish(asPath);
+    const doc = await fetcher.doc(url);
+    if (!doc) return null;
+    const card = /\/Products\//.test(url) ? cardLinkOf(doc) : null;
+    return { name: titleOf(doc) || q, url: card ? toEnglish(card) : url };
+  }
+  // Cardmarket names card pages after the card: /<lang>/<game>/Cards/Tinder-Wall.
+  const direct = `/en/${game}/Cards/${slugOf(q)}`;
+  const doc = await fetcher.doc(direct);
+  if (doc && (doc.querySelector('.article-row') || doc.querySelector('a[href*="/Products/Singles/"]'))) {
+    return { name: titleOf(doc) || q, url: direct };
+  }
+  // Otherwise the site search: the first single whose name matches.
+  const search = await fetcher.doc(`/en/${game}/Products/Search?searchString=${encodeURIComponent(q)}`);
+  if (!search) return null;
+  const want = baseName(q);
+  const hit = [...search.querySelectorAll('a[href*="/Products/Singles/"], a[href*="/Cards/"]')]
+    .find((a) => baseName(a.textContent) === want);
+  if (!hit) return null;
+  const href = toEnglish(hit.getAttribute('href').replace(/[?#].*$/, ''));
+  if (/\/Cards\//.test(href)) return { name: hit.textContent.trim(), url: href };
+  const product = await fetcher.doc(href);
+  const card = product && cardLinkOf(product);
+  return { name: hit.textContent.trim(), url: card ? toEnglish(card) : href };
+}

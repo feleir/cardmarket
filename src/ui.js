@@ -5,7 +5,8 @@ import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, D
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
-import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers } from './collect.js';
+import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers, findCard } from './collect.js';
+import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
 import { optimize } from './optimizer.js';
 import { addAll, cartLog, siteCartCode } from './cart.js';
@@ -103,6 +104,7 @@ export function mount() {
     countryFilter: '',
     fetcher: null,
     cartState: new Map(),
+    extra: { query: '', qty: 4, busy: false, msg: '', plan: null, want: null },
     cartMsg: null,
     adding: false,
   };
@@ -265,6 +267,58 @@ export function mount() {
     return `<button class="btn sm sec" data-add="${gi}:${ii}">Add</button>`;
   }
 
+  // "Add a card": the cheapest way to add copies of one more card to this
+  // cart, next to a full re-plan with it.
+  function viewExtra() {
+    const x = st.extra;
+    const p = x.plan;
+    const line = (i) => `<div class="item"><div class="t">${i.quantity}× ${esc(i.want.name)} <span class="muted">· ${esc(i.offer.expansion)} · ${esc(langName(i.offer.language))} · ${esc(condCode(i.offer.condition))}</span>
+        <div class="muted">${esc(i.seller)}: ${i.joins ? `joins their parcel (${i.shippingDelta > 0.005 ? `+${money(i.shippingDelta)} shipping, next step` : 'no extra shipping'})` : `new parcel +${money(i.shippingDelta)}`}</div></div>
+        <div class="p">${money(i.offer.price)}</div></div>`;
+    const changed = p ? p.replan.result.groups.filter((g) => !st.result.groups.some((h) => h.seller === g.seller)).length : 0;
+    return `<div class="card"><b>Add a card</b>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="cmopt-extra-q" data-x="query" placeholder="Card name, e.g. Tinder Wall" value="${esc(x.query)}">
+        <input type="number" id="cmopt-extra-n" data-x="qty" min="1" max="40" value="${x.qty}" style="max-width:80px">
+      </div>
+      <p><button class="btn sm" data-act="findExtra" ${x.busy ? 'disabled' : ''}>${x.busy ? 'Looking…' : 'Find the best way'}</button></p>
+      ${x.msg ? `<p class="muted">${esc(x.msg)}</p>` : ''}
+      ${p ? `
+        <p><b>Add to this cart: +${money(p.fit.cost)}</b></p>
+        ${p.fit.items.map(line).join('')}
+        ${p.fit.missing ? `<p class="warn">${p.fit.missing} cop${p.fit.missing > 1 ? 'ies' : 'y'} could not be found with your filters.</p>` : ''}
+        <p><button class="btn sm" data-act="addExtra">Put these in the Cardmarket cart</button> <button class="btn sm sec" data-act="keepExtra">Keep in the plan</button></p>
+        <p style="margin-top:12px"><b>Or re-plan everything: +${money(p.replan.cost)}</b>
+          ${p.replan.cost < p.fit.cost - 0.005 ? `<span class="ok">${money(p.fit.cost - p.replan.cost)} cheaper, but ${changed ? `${changed} new seller(s) and ` : ''}other items move.</span>` : '<span class="muted">no cheaper than adding to this cart.</span>'}</p>
+        ${p.replan.cost < p.fit.cost - 0.005 ? '<p><button class="btn sm sec" data-act="useReplan">Use the re-planned cart</button></p>' : ''}` : ''}
+    </div>`;
+  }
+
+  async function findExtra() {
+    const x = st.extra;
+    const q = x.query.trim();
+    if (!q || !st.result) return;
+    x.busy = true; x.msg = ''; x.plan = null; render();
+    try {
+      const s = st.settings;
+      const fetcher = st.fetcher ||= new Fetcher({ onWait: log });
+      fetcher.delayMs = s.delayMs; fetcher.stopped = false;
+      const card = await findCard(fetcher, q, game());
+      if (!card) throw new Error(`Could not find "${q}" on Cardmarket. Try the exact card name, or paste its Cardmarket link.`);
+      const want = { idWant: `extra:${Date.now()}`, name: card.name, url: card.url, kind: /\/Cards\//.test(card.url) ? 'card' : 'product',
+        quantity: Math.max(1, x.qty | 0), languages: [], minCondition: 0, flags: {}, maxPrice: 0, expansion: '' };
+      await collectOffers(fetcher, [want], s);
+      if (!want.offers.length) throw new Error(`No offers for ${card.name} with your filters (countries, condition, language).`);
+      x.want = want;
+      x.plan = planExtra(st.result, (st.wants || []).filter((w) => w.offers), want, optOptions());
+      x.msg = `${card.name}: ${want.offers.length} offer(s) found.`;
+    } catch (e) {
+      x.msg = e instanceof BlockedError ? e.message : e.message || String(e);
+    }
+    x.busy = false;
+    render();
+  }
+
   function viewResults() {
     const r = st.result;
     if (!r) return '<p class="muted">Run the optimizer first.</p>';
@@ -290,6 +344,7 @@ export function mount() {
       <p><button class="btn sec sm" data-act="cartData">Copy cart data</button> <span class="muted">to check a result that looks wrong</span></p>
       <textarea id="cmopt-cartdata" readonly hidden></textarea>
     </div>
+    ${viewExtra()}
     ${r.groups.map((g, gi) => `
       <div class="card">
         <div class="row" style="align-items:center">
@@ -570,6 +625,23 @@ export function mount() {
         }
         break;
       }
+      case 'findExtra': await findExtra(); break;
+      case 'addExtra': await addItems(st.extra.plan.fit.items, t); break;
+      case 'keepExtra': {
+        // The cart with the new copies added becomes the plan.
+        st.wants.push(st.extra.want);
+        st.result = st.extra.plan.fit.result;
+        st.extra = { ...st.extra, plan: null, msg: `${st.extra.want.name} added to the plan.` };
+        render();
+        break;
+      }
+      case 'useReplan': {
+        st.wants.push(st.extra.want);
+        st.result = st.extra.plan.replan.result;
+        st.extra = { ...st.extra, plan: null, msg: `Re-planned with ${st.extra.want.name}. Items that moved need adding to the cart again.` };
+        render();
+        break;
+      }
       case 'debug': {
         const text = debugReport();
         try {
@@ -607,6 +679,8 @@ export function mount() {
     else update({ [k]: t.value });
   });
   shadow.addEventListener('input', (e) => {
+    const xk = e.target.dataset?.x;
+    if (xk) { st.extra[xk] = xk === 'qty' ? Number(e.target.value) || 1 : e.target.value; return; }
     if (e.target.dataset.k !== 'countryFilter') return;
     st.countryFilter = e.target.value;
     const pos = e.target.selectionStart;
