@@ -92,6 +92,7 @@ export const DEFAULT_SETTINGS = {
   languages: [],          // empty = use what each want says
   minCondition: 0,        // 0 = use what each want says
   foil: 'want',           // 'want' | 'Y' | 'N' | 'any'
+  anyPrinting: false,     // treat wants for one printing as "any printing"
   minRating: 0,           // 0..5, see RATINGS
   allowUnrated: true,
   sellerTypes: [],        // [] = all; 0 private, 1 professional, 2 powerseller
@@ -100,7 +101,7 @@ export const DEFAULT_SETTINGS = {
   maxVersions: 12,
   maxSellers: 0,          // 0 = unlimited
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels
-  delayMs: 1200,
+  delayMs: 2000,
   timeBudgetMs: 3000,
   scanMode: 'auto',       // 'auto' (only if a card page was cut off) | 'always' | 'off'
   scanSellers: 10,        // sellers whose whole wants-matching stock is read

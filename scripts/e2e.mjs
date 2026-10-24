@@ -187,15 +187,20 @@ await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ pag
   // Running it again sends nothing: everything is already in the cart.
   const posts = () => requestedCount.ajax;
   const sentBefore = posts();
+  const idle = () => page.waitForSelector('#cmopt-root button[data-act="addAll"]:not([disabled])', { timeout: 90000 });
+  const t0 = Date.now();
   await page.click('#cmopt-root >> text=Add all to cart');
-  await page.waitForSelector('#cmopt-root >> text=All 4 added to your cart', { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  await idle();
   if (posts() !== sentBefore) fail('a second "Add all" pressed items already in the cart');
+  if (Date.now() - t0 > 15000) fail(`a second "Add all" with nothing to add took ${Date.now() - t0} ms`);
 
   // A browser check on the card pages stops it with an explanation.
   cart.delete('12');
   checkPages = true;
   await page.click('#cmopt-root >> text=Add all to cart');
-  await page.waitForSelector('#cmopt-root >> text=browser check', { timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  await idle();
   if (!/Cardmarket is showing its browser check/.test(await page.locator('#cmopt-root main').innerText())) fail('browser check not reported');
   checkPages = false;
 });

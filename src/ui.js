@@ -21,6 +21,7 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (s) {
       if (OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions)) s.excludeExpansions = DEFAULT_EXCLUDED_EXPANSIONS;
+      if (s.delayMs === 1200) s.delayMs = DEFAULT_SETTINGS.delayMs; // the old default, before Cardmarket's browser checks
       const ch = s.shipping?.CH?.map((t) => t.price).join();
       if (ch && OLD_CH_TIERS.some((old) => old.join() === ch)) s.shipping.CH = DEFAULT_SHIPPING.CH;
       return { ...DEFAULT_SETTINGS, ...s, shipping: { ...DEFAULT_SHIPPING, ...(s.shipping || {}) } };
@@ -174,6 +175,7 @@ export function mount() {
           ${[['want', 'As in wants list'], ['N', 'Non-foil only'], ['Y', 'Foil only'], ['any', 'Either']].map(([v, t]) => `<option value="${v}" ${s.foil === v ? 'selected' : ''}>${t}</option>`).join('')}
         </select></div>
       </div>
+      <label><input type="checkbox" data-k="anyPrinting" ${s.anyPrinting ? 'checked' : ''}> Any printing: ignore the expansion in the wants list and also look at every other printing of each card</label>
       <details><summary>Printings / expansions</summary>
         <label>For "any printing" wants, check at most this many printings</label>
         <input type="number" min="1" max="60" data-k="maxVersions" value="${s.maxVersions}">
@@ -264,6 +266,8 @@ export function mount() {
         : r.exact ? '<p class="muted">Checked with the exact solver (stopped at its time limit; may not be the very best).</p>' : ''}
       ${missing ? `<p class="warn">${missing} card(s) could not be found with your filters (see bottom).</p>` : ''}
       <p class="muted">${r.stats.offersConsidered} offers from ${r.stats.sellersConsidered} sellers · ${r.stats.restarts} searches in ${r.stats.ms} ms</p>
+      <p><button class="btn sec sm" data-act="cartData">Copy cart data</button> <span class="muted">to check a result that looks wrong</span></p>
+      <textarea id="cmopt-cartdata" readonly hidden></textarea>
     </div>
     ${r.groups.map((g, gi) => `
       <div class="card">
@@ -365,6 +369,22 @@ export function mount() {
     return `${w.name}: 0 offer(s) (${parts.join(', ')})`;
   }
 
+  // Everything the optimizer saw, compact: enough to rerun this exact case
+  // (with the exact solver) and see why it bundled as it did.
+  function cartData() {
+    const s = st.settings;
+    const r = st.result;
+    const offerRow = (o) => [o.seller, o.price, o.available, o.countryCode, o.trackedOnly ? 1 : 0, o.expansion, langName(o.language), condCode(o.condition), o.id];
+    return JSON.stringify({
+      tool: 'cmopt-cart', at: new Date().toISOString(),
+      settings: { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, anyPrinting: s.anyPrinting, sellerCountries: s.sellerCountries },
+      offerColumns: ['seller', 'price', 'available', 'country', 'trackedOnly', 'expansion', 'language', 'condition', 'id'],
+      wants: (st.wants || []).map((w) => ({ name: w.name, quantity: w.quantity, kind: w.kind, expansion: w.expansion, offers: (w.offers || []).map(offerRow) })),
+      result: r && { total: r.total, itemsCost: r.itemsCost, shippingCost: r.shippingCost, exact: r.exact || '',
+        groups: r.groups.map((g) => ({ seller: g.seller, cards: g.cards, value: g.value, shipping: g.shipping, items: g.items.map((it) => [it.quantity, it.want.name, it.offer.price, it.offer.id]) })) },
+    });
+  }
+
   function debugReport() {
     const s = st.settings;
     const wants = st.wants || [];
@@ -372,7 +392,7 @@ export function mount() {
     const pick = (w) => w && { name: w.name, url: w.url, kind: w.kind, quantity: w.quantity, languages: w.languages, minCondition: w.minCondition, flags: w.flags, maxPrice: w.maxPrice, expansion: w.expansion };
     return JSON.stringify({
       tool: 'cmopt', at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
-      settings: { sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode },
+      settings: { sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
       wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length,
       firstWants: wants.slice(0, 3).map(pick),
       wantsRowHtml: wants[0]?.rowHtml,
@@ -494,6 +514,21 @@ export function mount() {
       case 'copy':
         try { await navigator.clipboard.writeText(asText()); t.textContent = 'Copied ✓'; } catch { prompt('Copy:', asText()); }
         break;
+      case 'cartData': {
+        const text = cartData();
+        try {
+          await navigator.clipboard.writeText(text);
+          t.textContent = 'Copied ✓ — paste it in the chat';
+        } catch {
+          const ta = shadow.getElementById('cmopt-cartdata');
+          ta.hidden = false;
+          ta.value = text;
+          ta.focus();
+          ta.select();
+          t.textContent = 'Selected — use Copy';
+        }
+        break;
+      }
       case 'debug': {
         const text = debugReport();
         try {

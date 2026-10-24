@@ -53,7 +53,7 @@ export function offerVerdict(o, want, f, settings) {
   if (want.maxPrice && o.price > want.maxPrice + 1e-9) return 'max price';
   if (o.rating === 0 ? !settings.allowUnrated : o.rating < (settings.minRating || 0)) return 'rating';
   if (keywordList(settings.excludeSellers).includes(o.seller.toLowerCase())) return 'blocked seller';
-  if (want.kind === 'card') {
+  if (want.kind === 'card' || want.anyPrinting) {
     const exp = (o.expansion || '').toLowerCase();
     if (keywordList(settings.excludeExpansions).some((k) => exp.includes(k))) return 'expansion';
   }
@@ -101,6 +101,19 @@ function pageDiag(doc, url, offers) {
   };
 }
 
+const cardLinkOf = (doc) => [...doc.querySelectorAll('a[href*="/Cards/"]')]
+  .map((a) => (a.getAttribute('href') || '').replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, ''))
+  .find((h) => /^\/[a-z]{2}\/[^/]+\/Cards\/[^/]+$/.test(h)) || null;
+
+// The all-printings page for a want that names one printing: the link on
+// its page, or else the printing's own slug (minus a version suffix) under
+// /Cards/, which is how Cardmarket names them.
+function cardUrlFor(want, page) {
+  if (page.cardUrl) return toEnglish(page.cardUrl);
+  const m = toEnglish(want.url).replace(/[?#].*$/, '').match(/^(\/en\/[^/]+)\/Products\/Singles\/[^/]+\/([^/]+)$/);
+  return m ? `${m[1]}/Cards/${m[2].replace(/-V-?\d+$/i, '')}` : null;
+}
+
 async function offersAt(fetcher, url) {
   const hit = fetcher.cached(url);
   if (hit) return hit;
@@ -109,6 +122,8 @@ async function offersAt(fetcher, url) {
   const v = {
     offers,
     versions: doc && /\/Cards\//.test(url) ? parseVersionLinks(doc, url) : [],
+    // A printing's page links to the card's all-printings page.
+    cardUrl: doc && /\/Products\//.test(url) ? cardLinkOf(doc) : undefined,
     truncated: doc ? isTruncated(doc) : false,
     diag: pageDiag(doc, url, offers),
   };
@@ -129,10 +144,23 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     found.push(...page.offers);
     let truncated = !!page.truncated;
     const diag = { pages: [page.diag], versions: page.versions.length, rejected: {} };
-    // An any-printing want whose card page lists printings but no offers:
-    // visit the cheapest printings one by one.
-    if (want.kind === 'card' && !page.offers.length && page.versions.length) {
-      const versions = page.versions
+    // "Any printing" for a want that names one: add the card's
+    // all-printings page (its offers come with their expansion).
+    want.anyPrinting = !!settings.anyPrinting && want.kind === 'product';
+    let cardPage = want.kind === 'card' ? page : null;
+    if (want.anyPrinting) {
+      const cardPath = cardUrlFor(want, page);
+      if (cardPath) {
+        cardPage = await offersAt(fetcher, `${cardPath}?${qs}`);
+        found.push(...cardPage.offers);
+        truncated ||= !!cardPage.truncated;
+        diag.pages.push(cardPage.diag);
+      }
+    }
+    // A card page that lists printings but no offers: visit the cheapest
+    // printings one by one.
+    if (cardPage && !cardPage.offers.length && cardPage.versions?.length) {
+      const versions = cardPage.versions
         .filter((v) => !keywordList(settings.excludeExpansions).some((k) => (v.expansion || '').toLowerCase().includes(k)))
         .sort((a, b) => a.fromPrice - b.fromPrice)
         .slice(0, settings.maxVersions || 12);
@@ -174,10 +202,10 @@ const cleanPath = (href) => toEnglish(href).replace(/[?#].*$/, '');
 // Which want does an offer from a seller's page belong to?
 export function matchWants(offer, wants) {
   const path = cleanPath(offer.productUrl);
-  const byProduct = wants.filter((w) => w.kind === 'product' && cleanPath(w.url) === path);
-  if (byProduct.length) return byProduct;
   const name = baseName(offer.name);
-  return wants.filter((w) => w.kind === 'card' && name && baseName(w.name) === name);
+  return wants.filter((w) => (w.kind === 'product' && !w.anyPrinting
+    ? cleanPath(w.url) === path
+    : !!name && baseName(w.name) === name));
 }
 
 // Should the seller scan run? 'auto' runs it only when some card page held

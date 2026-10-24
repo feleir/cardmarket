@@ -247,3 +247,32 @@ test('tracked-only sellers are charged the tracked rate', async () => {
   assert.equal(tierCost(sellerTiers(DEFAULT_SHIPPING, { countryCode: 'CH' }), 1, 1), 1.83);
   assert.equal(tierCost(sellerTiers(DEFAULT_SHIPPING, { countryCode: 'CH', trackedOnly: true }), 1, 1), 8.5);
 });
+
+test('any printing: a want for one printing also gets offers for its other printings', async () => {
+  const { collectOffers, matchWants } = await import('../src/collect.js');
+  const P = '/en/Magic/Products/Singles';
+  const pages = {
+    [`${P}/Torment/Aquamoeba`]: productPage({ title: 'Aquamoeba', expansion: 'Torment', rows: [offerRow({ id: 1, seller: 'a', price: '0,90 €' })] })
+      .replace('</body>', '<a href="/en/Magic/Cards/Aquamoeba">Show all versions</a></body>'),
+    '/en/Magic/Cards/Aquamoeba': productPage({ title: 'Aquamoeba', expansion: '', rows: [
+      offerRow({ id: 2, seller: 'b', price: '0,15 €', expansion: 'Dominaria Remastered', productUrl: `${P}/Dominaria-Remastered/Aquamoeba` }),
+      offerRow({ id: 3, seller: 'c', price: '0,05 €', expansion: 'WCD 2002: Brian Kibler', productUrl: `${P}/WCD-2002-Brian-Kibler/Aquamoeba` }),
+    ] }),
+  };
+  const fetched = [];
+  const mem = new Map();
+  const fetcher = {
+    cached: (u) => mem.get(u), store: (u, v) => mem.set(u, v),
+    doc: async (u) => { fetched.push(u); const html = pages[u.split('?')[0]]; return html ? doc(html) : null; },
+  };
+  const want = { idWant: '1', kind: 'product', name: 'Aquamoeba', url: `${P}/Torment/Aquamoeba?sellerCountry=4`, quantity: 4, languages: [], minCondition: 5, flags: {} };
+
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: false });
+  assert.deepEqual(want.offers.map((o) => o.id), ['1']);
+
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: true });
+  assert.deepEqual(want.offers.map((o) => [o.id, o.expansion]), [['1', 'Torment'], ['2', 'Dominaria Remastered']]);
+  assert.ok(fetched.some((u) => u.startsWith('/en/Magic/Cards/Aquamoeba?sellerCountry=4')));
+  // A seller-scan offer of another printing now matches too.
+  assert.equal(matchWants({ productUrl: `${P}/Dominaria-Remastered/Aquamoeba`, name: 'Aquamoeba' }, [want]).length, 1);
+});
