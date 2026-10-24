@@ -26,7 +26,7 @@ const userscript = `// ==UserScript==
 // @updateURL    ${pkg.config.cmoptUrl.replace(/cm-optimizer\.js$/, 'cm-optimizer.user.js')}
 // @downloadURL  ${pkg.config.cmoptUrl.replace(/cm-optimizer\.js$/, 'cm-optimizer.user.js')}
 // @grant        none
-// @inject-into  page
+// @inject-into  auto
 // @run-at       document-idle
 // ==/UserScript==
 ${us.outputFiles[0].text}`;

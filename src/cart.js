@@ -115,8 +115,16 @@ function watch(win) {
   return w;
 }
 
+// Can this script see the frame page's own JavaScript (Cardmarket's jcp
+// queue)? Not when it runs in a sandbox, such as some userscript managers
+// on Safari: then the frame's XMLHttpRequest and jcp state are invisible.
+const seesPage = (win) => { try { return typeof win.jcp === 'function'; } catch { return false; } };
+
 async function settled(win, w, { min = 400, max = 15000 } = {}) {
   const start = Date.now();
+  // Blind: give each request a fixed time instead; the cart check and the
+  // retry afterwards catch anything that still did not make it.
+  if (!seesPage(win)) { await sleep(Math.max(min, 3000)); return true; }
   await sleep(min);
   let quietSince = 0;
   while (Date.now() - start < max) {

@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 let pw;
 try { pw = require('playwright'); } catch { pw = require(`${execSync('npm root -g').toString().trim()}/playwright`); }
 
-const ext = path.resolve('extension');
+const ext = path.resolve(process.env.CMOPT_EXT_DIR || 'extension');
 await mkdir('docs/store', { recursive: true });
 await mkdir('e2e-out', { recursive: true });
 const P = '/en/Magic/Products/Singles';
@@ -28,7 +28,7 @@ const pages = {
 };
 // Like Cardmarket's jcp(): a page-world queue the cart code waits on.
 const pageScript = `<script>
-  window.jcpStack = []; window.doingJCPCall = false;
+  window.jcp = function () {}; window.jcpStack = []; window.doingJCPCall = false;
   document.addEventListener('submit', (e) => {
     const f = e.target.closest('form[data-ajax-action]'); if (!f) return; e.preventDefault();
     window.doingJCPCall = true;

@@ -86,7 +86,7 @@ const fieldsOf = (body) => Object.fromEntries([...body.matchAll(/name="([^"]+)"\
 // wait in jcpStack, and the server answers slowly. Closing the page while
 // something is queued loses it, as happened live before the fix.
 const pageScript = `<script>
-  window.jcpStack = []; window.doingJCPCall = false;
+  window.jcp = function () {}; window.jcpStack = []; window.doingJCPCall = false;
   function send(body) {
     window.doingJCPCall = true;
     const x = new XMLHttpRequest();
