@@ -23,7 +23,10 @@ const userscript = `// ==UserScript==
 // @version      ${pkg.version}
 // @description  Wants-list cart optimizer: cheapest cards + shipping across sellers, with a seller-country allow list.
 // @match        https://www.cardmarket.com/*
+// @updateURL    ${pkg.config.cmoptUrl.replace(/cm-optimizer\.js$/, 'cm-optimizer.user.js')}
+// @downloadURL  ${pkg.config.cmoptUrl.replace(/cm-optimizer\.js$/, 'cm-optimizer.user.js')}
 // @grant        none
+// @inject-into  page
 // @run-at       document-idle
 // ==/UserScript==
 ${us.outputFiles[0].text}`;
