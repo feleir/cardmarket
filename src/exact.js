@@ -18,7 +18,7 @@ import { sellerTiers } from './shipping.js';
 const BIG = 10000;
 export const HIGHS_VERSION = '1.15.4';
 
-export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium = 0 } = {}) {
+export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium = 0, vatInParcelValue = false } = {}) {
   const vars = [];
   const sellers = new Map();
   const articles = new Map();
@@ -28,7 +28,8 @@ export function buildModel(wants, { shipping, sellerPenalty = 0, printingPremium
     vars.push({ v, wi, oi, o });
     if (!sellers.has(o.seller)) sellers.set(o.seller, { idx: sellers.size, tiers: sellerTiers(shipping, o), xs: [] });
     else if (o.trackedOnly) sellers.get(o.seller).tiers = sellerTiers(shipping, o);
-    sellers.get(o.seller).xs.push({ v, p: o.price });
+    // Parcel value for the shipping steps: before VAT unless asked otherwise.
+    sellers.get(o.seller).xs.push({ v, p: vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice });
     if (!articles.has(o.id)) articles.set(o.id, { cap: Math.max(1, o.available | 0), vs: [] });
     articles.get(o.id).vs.push(v);
   }));

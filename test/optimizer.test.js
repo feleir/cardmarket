@@ -187,3 +187,28 @@ test('all copies from one seller: shown with what it would change', async () => 
   assert.equal(r.total, 21.33);
   assert.equal(r.groups.length, 1);
 });
+
+test('the 25 € tracked limit counts prices before VAT unless asked otherwise', async () => {
+  const { DEFAULT_SHIPPING } = await import('../src/constants.js');
+  const champion = (single) => [{ key: 'ec', name: 'Elvish Champion', quantity: 3, offers: [
+    ...single.map(([price, listed], i) => ({ id: `s${i}`, seller: `S${i}`, countryCode: 'CH', price, listedPrice: listed, vat: 8.1, available: 1 })),
+    { id: 'z', seller: 'Z', countryCode: 'CH', price: 8.65, listedPrice: 8, vat: 8.1, available: 3 }] }];
+  const allFromZ = (r) => r.groups.flatMap((g) => g.items).find((it) => it.allFromOne)?.allFromOne;
+
+  // The live case: single copies at 6,49 / 7,03 / 5,49 beat 3 × 8,65 from
+  // one seller either way; the rule only changes by how much.
+  const live = champion([[6.49, 6], [7.03, 6.5], [5.49, 5.08]]);
+  let r = optimize(live, { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.equal(r.total, 24.5); // 19,01 + 3 × 1,83
+  assert.equal(allFromZ(r).delta, 3.28); // 25,95 + 1,83 (letter: 24 € before VAT)
+  r = optimize(live, { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100, vatInParcelValue: true });
+  assert.equal(allFromZ(r).delta, 9.95); // 25,95 + 8,50 (tracked: 25,95 € with VAT)
+
+  // Where the rule decides: single copies at 8,00 each (7,40 before VAT).
+  const close = champion([[8, 7.4], [8, 7.4], [8, 7.4]]);
+  r = optimize(close, { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100 });
+  assert.deepEqual([r.total, r.groups.map((g) => g.seller)], [27.78, ['Z']]); // bundle in a letter
+  r = optimize(close, { shipping: DEFAULT_SHIPPING, timeBudgetMs: 100, vatInParcelValue: true });
+  // 2 from Z stay under 25 € even with VAT (17,30): letter. 17,30 + 1,83 + 8 + 1,83.
+  assert.deepEqual([r.total, r.groups.length], [28.96, 2]);
+});

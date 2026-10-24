@@ -102,6 +102,7 @@ export const DEFAULT_SETTINGS = {
   maxVersions: 12,
   maxSellers: 0,          // 0 = unlimited
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels
+  vatInParcelValue: false, // count Swiss VAT toward the 25 € tracked-shipping limit
   delayMs: 2000,
   timeBudgetMs: 3000,
   scanMode: 'auto',       // 'auto' (only if a card page was cut off) | 'always' | 'off'

@@ -216,6 +216,8 @@ export function mount() {
       <p class="muted">Card pages show the cheapest offers first and hold the rest back. <b>Auto</b> reads the top sellers' whole stock (filtered by your wants list) only when some card page was cut off, so sellers hidden there are not missed. If every page showed all its offers, the card scan is already complete and this is skipped.</p>
       <label><input type="checkbox" data-k="exact" ${s.exact ? 'checked' : ''}> Exact solver — proves the cheapest cart (downloads ≈3.5 MB once; not used with a seller cap)</label>
       <details><summary>Shipping estimates</summary>
+        <label><input type="checkbox" data-k="vatInParcelValue" ${s.vatInParcelValue ? 'checked' : ''}> Count Swiss VAT toward the 25 € tracked-shipping limit</label>
+        <p class="muted">Off: a parcel's value is the sellers' prices before the 8.1% VAT Cardmarket adds. If your cart asks for tracked shipping on a parcel under 25 € before VAT, turn this on.</p>
         <p class="muted">One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. Check real prices for your country on Cardmarket's Shipping Costs help page.</p>
         ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}`}</label>
           <textarea data-ship="${code}">${esc(formatTiers(s.shipping[code] || s.shipping.default))}</textarea>`).join('')}
@@ -517,7 +519,7 @@ export function mount() {
   const optOptions = () => {
     const s = st.settings;
     return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
-      printingPremium: s.anyPrinting ? s.printingPremium : 0 };
+      printingPremium: s.anyPrinting ? s.printingPremium : 0, vatInParcelValue: !!s.vatInParcelValue };
   };
 
   async function reoptimize() {

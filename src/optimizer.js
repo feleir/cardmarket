@@ -27,7 +27,7 @@ function mulberry32(seed) {
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // wants: [{ key, name, quantity, offers: [{ id, seller, countryCode, price, available, ... }] }]
-// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed, printingPremium,
+// opts: { shipping, sellerPenalty, maxSellers, timeBudgetMs, seed, printingPremium, vatInParcelValue,
 //         warmStart: picks[wantIndex] = [{ id, count }] e.g. from the exact solver }
 export function optimize(wants, opts = {}) {
   const shipping = opts.shipping || {};
@@ -40,6 +40,10 @@ export function optimize(wants, opts = {}) {
   // choosing. Totals and parcel values still use real prices.
   const premium = Number(opts.printingPremium) || 0;
   const costOf = (o) => o.price + (o.otherPrinting ? premium : 0);
+  // What a copy counts toward a parcel's value for the shipping steps (the
+  // 25 € tracked limit): by default the seller's price before the Swiss VAT
+  // Cardmarket adds on top; with vatInParcelValue, the price with VAT.
+  const tvOf = (o) => (opts.vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice);
 
   // Flatten into indexed arrays so the hot loops avoid object lookups.
   const sellerIdx = new Map();
@@ -66,7 +70,7 @@ export function optimize(wants, opts = {}) {
         arts.push(Math.max(1, o.available | 0));
       }
       list.push(offers.length);
-      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), price: o.price, cost: costOf(o), ref: o, w: wi });
+      offers.push({ s: sellerIdx.get(o.seller), a: artIdx.get(o.id), price: o.price, tv: tvOf(o), cost: costOf(o), ref: o, w: wi });
     }
     list.sort((x, y) => offers[x].cost - offers[y].cost);
     wantOffers[wi] = list;
@@ -93,7 +97,7 @@ export function optimize(wants, opts = {}) {
     const o = offers[oi];
     assign[u] = oi;
     if (sN[o.s]++ === 0) open++;
-    sV[o.s] += o.price;
+    sV[o.s] += o.tv;
     used[o.a]++;
   };
   const take = (u) => {
@@ -101,7 +105,7 @@ export function optimize(wants, opts = {}) {
     if (oi < 0) return;
     const o = offers[oi];
     assign[u] = -1;
-    if (--sN[o.s] === 0) { open--; sV[o.s] = 0; } else sV[o.s] -= o.price;
+    if (--sN[o.s] === 0) { open--; sV[o.s] = 0; } else sV[o.s] -= o.tv;
     used[o.a]--;
   };
 
@@ -114,7 +118,7 @@ export function optimize(wants, opts = {}) {
       if (forbid && forbid.has(o.s)) return Infinity;
       if (limitOn && maxSellers && open >= maxSellers) return Infinity;
     }
-    return o.cost + ship(o.s, n + 1, sV[o.s] + o.price) - ship(o.s, n, sV[o.s]);
+    return o.cost + ship(o.s, n + 1, sV[o.s] + o.tv) - ship(o.s, n, sV[o.s]);
   };
   const bestFor = (u, forbid, noise = 0) => {
     let best = -1;
@@ -441,7 +445,7 @@ export function optimize(wants, opts = {}) {
 
   return {
     ...summarize(),
-    baseline: baseline(wants, shipping),
+    baseline: baseline(wants, shipping, opts.vatInParcelValue),
     stats: { restarts, ms: Math.round(now() - start), sellersConsidered: S, offersConsidered: offers.length },
   };
 
@@ -457,8 +461,8 @@ export function optimize(wants, opts = {}) {
       if (x.s === o.s || x.price >= o.price - EPS) continue;
       const m = Math.min(n, arts[x.a] - used[x.a]);
       if (m <= 0) continue;
-      const here = ship(o.s, sN[o.s] - m, sV[o.s] - m * o.price) - ship(o.s, sN[o.s], sV[o.s]);
-      const there = ship(x.s, sN[x.s] + m, sV[x.s] + m * x.price) - ship(x.s, sN[x.s], sV[x.s]);
+      const here = ship(o.s, sN[o.s] - m, sV[o.s] - m * o.tv) - ship(o.s, sN[o.s], sV[o.s]);
+      const there = ship(x.s, sN[x.s] + m, sV[x.s] + m * x.tv) - ship(x.s, sN[x.s], sV[x.s]);
       const d = m * (x.cost - o.cost) + here + there;
       if (!best || d < best.delta) {
         best = { delta: round(d), moved: m, seller: sellers[x.s].name, price: x.price, inCart: sN[x.s] > 0,
@@ -486,7 +490,7 @@ export function optimize(wants, opts = {}) {
     for (const u of mine) {
       const o = offers[assign[u]];
       n.set(o.s, (n.get(o.s) || 0) + 1);
-      v.set(o.s, (v.get(o.s) || 0) + o.price);
+      v.set(o.s, (v.get(o.s) || 0) + o.tv);
       base += o.cost;
     }
     let leave = 0;
@@ -510,7 +514,7 @@ export function optimize(wants, opts = {}) {
         const ownHere = mine.filter((u) => assign[u] === oj).length;
         const k = Math.min(need, arts[x.a] - used[x.a] + ownHere);
         if (k <= 0) continue;
-        need -= k; cost += k * x.cost; value += k * x.price;
+        need -= k; cost += k * x.cost; value += k * x.tv;
         if (!need) break;
       }
       if (need) continue;
@@ -550,6 +554,7 @@ export function optimize(wants, opts = {}) {
       g.items.get(k).quantity++;
       g.cards++;
       g.value += o.price;
+      g.tierValue = (g.tierValue || 0) + o.tv;
       itemsCost += o.price;
     }
     for (const g of bySeller.values()) for (const it of g.items.values()) it.switch = switchCost(it.oi, it.quantity);
@@ -565,7 +570,7 @@ export function optimize(wants, opts = {}) {
     }
     let shippingCost = 0;
     const groups = [...bySeller.entries()].map(([s, g]) => {
-      const sh = ship(s, g.cards, g.value);
+      const sh = ship(s, g.cards, g.tierValue);
       shippingCost += sh;
       return { ...g, items: [...g.items.values()], shipping: sh - penalty, value: round(g.value) };
     }).sort((a, b) => b.value - a.value);
@@ -581,7 +586,7 @@ export function optimize(wants, opts = {}) {
 
 // Every copy from its cheapest available offer, ignoring shipping when
 // choosing - roughly what picking "cheapest" per card by hand gives you.
-export function baseline(wants, shipping) {
+export function baseline(wants, shipping, vatInParcelValue = false) {
   const used = new Map();
   const per = new Map();
   let items = 0;
@@ -594,7 +599,7 @@ export function baseline(wants, shipping) {
       used.set(o.id, (used.get(o.id) || 0) + 1);
       items += o.price;
       const g = per.get(o.seller) || { n: 0, v: 0, ref: o };
-      g.n++; g.v += o.price;
+      g.n++; g.v += vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice;
       if (o.trackedOnly) g.ref = o;
       per.set(o.seller, g);
     }
