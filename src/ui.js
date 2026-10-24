@@ -468,8 +468,9 @@ export function mount() {
     const sellers = [];
     const si = new Map();
     const sellerIndex = (o) => {
-      if (!si.has(o.seller)) { si.set(o.seller, sellers.length); sellers.push([o.seller, o.countryCode, o.trackedOnly ? 1 : 0]); }
+      if (!si.has(o.seller)) { si.set(o.seller, sellers.length); sellers.push([o.seller, o.countryCode, o.trackedOnly ? 1 : 0, o.vat || 0]); }
       if (o.trackedOnly) sellers[si.get(o.seller)][2] = 1;
+      if (o.vat) sellers[si.get(o.seller)][3] = o.vat;
       return si.get(o.seller);
     };
     const chosen = new Map();
@@ -487,7 +488,7 @@ export function mount() {
       tool: 'cmopt-cart2', at: new Date().toISOString().slice(0, 16),
       shipping: { CH: s.shipping.CH, default: s.shipping.default, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
       total: r?.total, exact: r?.exact || '',
-      sellers, // [name, country, tracked only]
+      sellers, // [name, country, tracked only, VAT %]
       wants, // [name, quantity, [[seller#, price, available, bought?]]]
     });
   }

@@ -13,8 +13,10 @@ const shipping = { CH: data.shipping.CH, default: data.shipping.default };
 const wants = data.wants.map(([name, quantity, rows], wi) => ({
   key: `w${wi}`, name, quantity,
   offers: rows.map(([s, price, available], i) => {
-    const [seller, countryCode, trackedOnly] = data.sellers[s];
-    return { id: `${wi}:${i}`, seller, countryCode, trackedOnly: !!trackedOnly, price, available };
+    const [seller, countryCode, trackedOnly, vat = 0] = data.sellers[s];
+    // Prices include the VAT; the shipping steps use the price before it.
+    const listedPrice = vat ? Math.round((price / (1 + vat / 100)) * 100) / 100 : undefined;
+    return { id: `${wi}:${i}`, seller, countryCode, trackedOnly: !!trackedOnly, vat, listedPrice, price, available };
   }),
 }));
 const opts = { shipping, sellerPenalty: data.shipping.penalty || 0, maxSellers: data.shipping.maxSellers || 0 };
