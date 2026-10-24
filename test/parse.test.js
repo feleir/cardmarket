@@ -303,3 +303,23 @@ test('a page that holds back offers is read again per seller type', async () => 
   await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, sellerTypes: [1] });
   assert.equal(fetched.length, 1);
 });
+
+test('offers that cannot be bought are left out', async () => {
+  const { collectOffers } = await import('../src/collect.js');
+  const P = '/en/Magic/Products/Singles';
+  const noButton = offerRow({ id: 2, seller: 'Christobye', price: '0,22 €' })
+    .replace(/<div class="d-none d-md-flex ms-auto"><form[\s\S]*?<\/form><\/div>/, '')
+    .replace(/<div class="d-md-none ms-auto"><a[\s\S]*?<\/a><\/div>/, '');
+  const noShip = offerRow({ id: 3, seller: 'faraway', price: '0,20 €' })
+    .replace('<div class="col-offer col-auto">', '<div class="col-offer col-auto"><span title="This seller does not ship to your country." class="fonticon-info"></span>');
+  const html = productPage({ title: 'Wellwisher', expansion: 'Onslaught', rows: [offerRow({ id: 1, seller: 'ok', price: '0,30 €' }), noButton, noShip] });
+  const [, b, c] = parseOffers(doc(html), `${P}/Onslaught/Wellwisher`);
+  assert.equal(!!(b.cartForm || b.cartModal), false);
+  assert.equal(c.noShip, true);
+  const mem = new Map();
+  const fetcher = { cached: (u) => mem.get(u), store: (u, v) => mem.set(u, v), doc: async () => doc(html) };
+  const want = { idWant: '1', kind: 'product', name: 'Wellwisher', url: `${P}/Onslaught/Wellwisher`, quantity: 2, languages: [], minCondition: 0, flags: {} };
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS });
+  assert.deepEqual(want.offers.map((o) => o.seller), ['ok']);
+  assert.deepEqual(want.diag.rejected, { 'no cart button': 1, 'does not ship to you': 1 });
+});

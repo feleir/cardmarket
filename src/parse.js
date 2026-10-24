@@ -211,6 +211,10 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
       fields: [...form.querySelectorAll('input[name]')].map((i) => [i.getAttribute('name'), i.getAttribute('value') || '']),
     } : null;
     const cartModal = row.querySelector('a[data-modal*="ShoppingCart"]')?.getAttribute('data-modal') || '';
+    // A seller who does not ship to the buyer's country: the row says so in a
+    // tooltip or its own text (exact wording not seen live yet, so loose).
+    const offerText = [flat(row.querySelector('.col-offer')?.textContent), ...tipsIn(row.querySelector('.col-offer') || row).map(tipOf)].join(' | ');
+    const noShip = /(does ?n[o']t|not|no longer|cannot be) (ship|deliver)|not (available|shipp\w*) (to|in) your country|kein(en)? versand|versendet nicht|n'exp[ée]die pas/i.test(offerText);
 
     offers.push({
       id: idMatch[1], seller: sellerName, sellerUrl: sellerLink?.getAttribute('href') || seller?.sellerUrl || '',
@@ -218,7 +222,7 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
       rating, sales,
       condition, language, isFoil, isSigned, isAltered,
       expansion, productUrl, name,
-      price, listedPrice: listed, vat, trackedOnly, available, comment, cartForm, cartModal,
+      price, listedPrice: listed, vat, trackedOnly, noShip, available, comment, cartForm, cartModal,
       pageUrl: pageUrl.replace(/^https?:\/\/[^/]+/, ''), // where the row (and its cart button) is
     });
   }

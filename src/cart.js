@@ -138,11 +138,18 @@ async function settled(win, w, { min = 400, max = 15000 } = {}) {
   return false;
 }
 
+let lastRowHtml = '';
 function pressAdd(doc, offer, amount) {
+  lastRowHtml = '';
   const row = doc.getElementById(`articleRow${offer.id}`) || doc.getElementById(`stockRow${offer.id}`);
   if (!row) return 'row not on the page (sold, or moved to a later page)';
   const form = row.querySelector('form[data-ajax-action*="ShoppingCart"], form[action*="ShoppingCart"]');
-  if (!form) return 'row has no cart button (logged out, or your own offer)';
+  if (!form) {
+    // Keep what the row shows instead of a button, to learn how Cardmarket
+    // marks sellers that do not ship to the buyer.
+    lastRowHtml = (row.querySelector('.col-offer') || row).outerHTML.replace(/\s+/g, ' ').slice(0, 1500);
+    return 'row has no cart button (does the seller ship to you?)';
+  }
   // Quantity: the hidden amount field, and any visible amount picker in the row.
   for (const el of row.querySelectorAll('input[name^="amount"], select[name^="amount"], .amount-input, select[name*="mount"]')) {
     if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === String(amount))) continue;
@@ -185,8 +192,8 @@ async function pressAll(items, onEach, pause) {
       const before = w.messages.length;
       const problem = pressAdd(doc, it.offer, it.quantity);
       const finished = problem ? true : await settled(win, w);
-      note({ step: 'press', url, article: it.offer.id, amount: it.quantity,
-        ...(problem ? { error: problem } : {}), ...(finished ? {} : { error: 'no answer from Cardmarket within 15 s' }),
+      note({ step: 'press', url, article: it.offer.id, seller: it.offer.seller, amount: it.quantity,
+        ...(problem ? { error: problem } : {}), ...(lastRowHtml ? { row: lastRowHtml } : {}), ...(finished ? {} : { error: 'no answer from Cardmarket within 15 s' }),
         ...(w.messages.length > before ? { message: w.messages.slice(before).join(' | ') } : {}) });
       onEach?.(it, 'sent');
     }

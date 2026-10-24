@@ -338,7 +338,9 @@ export function mount() {
     const missing = r.missing.reduce((n, m) => n + m.count, 0);
     return `
     ${st.cartMsg ? `<div class="card"><p class="${st.cartMsg.ok ? 'ok' : 'warn'}">${esc(st.cartMsg.text)}</p>
-      <p><a href="/en/${esc(game())}/ShoppingCart">Open the Cardmarket cart</a> to check items and the real shipping.</p></div>` : ''}
+      <p><a href="/en/${esc(game())}/ShoppingCart">Open the Cardmarket cart</a> to check items and the real shipping.</p>
+      ${st.failedSellers?.length ? `<p class="muted">Not added from: ${st.failedSellers.map(esc).join(', ')}. A seller that does not ship to you cannot be added.</p>
+        <p><button class="btn sm" data-act="excludeFailed">Leave out ${st.failedSellers.length > 1 ? 'these sellers' : esc(st.failedSellers[0])} and re-plan</button></p>` : ''}</div>` : ''}
     <div class="card">
       <div class="sum">
         <span>Total (estimated)</span><b class="big">${money(r.total)}</b>
@@ -580,6 +582,8 @@ export function mount() {
         else if (state !== 'unknown') st.cartState.set(it.offer.id, state);
         if (sent === items.length) label('Checking the cart…');
       }, { pauseMs: st.settings.delayMs });
+      // Sellers whose items could not be added: offered as a one-tap re-plan without them.
+      st.failedSellers = check ? [] : [...new Set(failed.map((it) => it.offer.seller))];
       st.cartMsg = check
         ? { ok: false, text: `Cardmarket is showing its browser check ("Just a moment…"), so adding stopped${added.length ? ` after ${added.length} item(s)` : ''}. Open any Cardmarket page in this tab, wait until the check passes (tick the box if asked), then run cmopt and tap "Add all to cart" again. Items already in your cart stay there and are skipped.` }
         : failed.length
@@ -639,6 +643,19 @@ export function mount() {
           ta.select();
           t.textContent = 'Selected — use Copy';
         }
+        break;
+      }
+      case 'excludeFailed': {
+        // Remember them in "Never buy from" and re-plan with the offers
+        // already read (no new page loads).
+        const drop = new Set(st.failedSellers.map((x) => x.toLowerCase()));
+        const list = st.settings.excludeSellers.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+        update({ excludeSellers: [...new Set([...list, ...st.failedSellers])].join('\n') });
+        for (const w of st.wants || []) if (w.offers) w.offers = w.offers.filter((o) => !drop.has(o.seller.toLowerCase()));
+        log(`Left out ${st.failedSellers.join(', ')} (added to "Never buy from" in Setup).`);
+        st.failedSellers = [];
+        st.cartMsg = null;
+        await reoptimize();
         break;
       }
       case 'findExtra': await findExtra(); break;

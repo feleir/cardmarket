@@ -42,8 +42,12 @@ const keywordList = (text) => String(text || '').split(/[\n,]+/).map((s) => s.tr
 
 // Why an offer is rejected, or '' if it is allowed. The reasons are counted
 // per card so a card with no offers says what removed them.
-export function offerVerdict(o, want, f, settings) {
+export function offerVerdict(o, want, f, settings, { needsCart = false } = {}) {
   if (f.countries.length && !f.countries.includes(o.countryId)) return 'country';
+  if (o.noShip) return 'does not ship to you';
+  // Logged in, other rows had a cart button and this one has none: the
+  // offer cannot be bought from this account (e.g. no shipping to you).
+  if (needsCart && !o.cartForm && !o.cartModal) return 'no cart button';
   if (f.languages.length && o.language && !f.languages.includes(o.language)) return 'language';
   if (f.minCondition && o.condition && o.condition > f.minCondition) return 'condition';
   if (f.foil === 'Y' && !o.isFoil) return 'foil';
@@ -60,7 +64,7 @@ export function offerVerdict(o, want, f, settings) {
   return '';
 }
 
-export const offerAllowed = (o, want, f, settings) => !offerVerdict(o, want, f, settings);
+export const offerAllowed = (o, want, f, settings, extra) => !offerVerdict(o, want, f, settings, extra);
 
 export async function loadWantsList(fetcher, listUrl, log) {
   const base = toEnglish(listUrl).replace(/[?#].*$/, '');
@@ -189,10 +193,11 @@ export async function collectOffers(fetcher, wants, settings, progress) {
       }
     }
     const seen = new Set();
+    const needsCart = found.some((o) => o.cartForm || o.cartModal);
     found = found.filter((o) => {
       if (seen.has(o.id)) return false;
       seen.add(o.id);
-      const why = offerVerdict(o, want, f, settings);
+      const why = offerVerdict(o, want, f, settings, { needsCart });
       if (why) diag.rejected[why] = (diag.rejected[why] || 0) + 1;
       return !why;
     });
@@ -271,6 +276,9 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
   // The filtered address for another seller: same query, that seller's path.
   const firstPath = firstUrl.replace(/\/Offers\/Singles$/, '');
   const filteredUrl = (o) => found.template.replace(firstPath, userUrl(o).replace(/\/Offers\/Singles$/, ''));
+  // Logged in when the card pages showed cart buttons; then a seller page
+  // without them means that seller cannot sell to this account.
+  const loggedIn = wants.some((w) => (w.offers || []).some((o) => o.cartForm || o.cartModal));
   let added = 0;
   for (const seller of sellers) {
     const base = filteredUrl(seller);
@@ -296,7 +304,7 @@ export async function scanSellers(fetcher, wants, listId, sellers, settings, log
     for (const o of pages.flatMap((p) => p.offers)) {
       for (const w of matchWants(o, wants)) {
         if (!w.filters || (w.offers || []).some((x) => x.id === o.id)) continue;
-        if (!offerAllowed(o, w, w.filters, settings)) continue;
+        if (!offerAllowed(o, w, w.filters, settings, { needsCart: loggedIn })) continue;
         w.offers.push(o);
         n++;
         cards.add(w.idWant);

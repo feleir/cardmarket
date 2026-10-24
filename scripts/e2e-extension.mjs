@@ -38,6 +38,7 @@ const pageScript = `<script>
 </script>`;
 const cart = new Map();
 const remote = [];
+const refused = new Set(); // articles the mock cart will not take (seller does not ship to you)
 
 const ctx = await pw.chromium.launchPersistentContext(await mkdtemp(path.join(tmpdir(), 'cmopt-')), {
   executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium',
@@ -53,7 +54,7 @@ await ctx.route('https://www.cardmarket.com/**', async (route) => {
     const body = req.postData() || '';
     const id = body.match(/name="idArticle\[(\d+)\]"/)?.[1];
     const amount = body.match(/name="amount\[\d+\]"\r\n\r\n(\d+)/)?.[1];
-    if (id) cart.set(id, Number(amount));
+    if (id && !refused.has(id)) cart.set(id, Number(amount));
     return route.fulfill({ status: 200, body: '<ok/>' });
   }
   if (u.pathname === '/en/Magic/ShoppingCart') return route.fulfill({ status: 200, contentType: 'text/html', body: [...cart.keys()].map((id) => `<div id="articleRow${id}"></div>`).join('') });
@@ -99,6 +100,24 @@ await sw.evaluate(async () => {
 });
 check((await shown()) !== before, 'toolbar button toggles the panel');
 await page.screenshot({ path: 'e2e-out/extension.png' });
+
+// A seller whose items cannot be added (e.g. does not ship to you): the
+// results offer to leave them out, which re-plans with the other seller.
+if (!(await shown())) await page.click('#cmopt-launch');
+cart.clear();
+refused.add('30');
+await page.click('#cmopt-root >> text=Add all to cart');
+const leaveOut = await page.waitForSelector('#cmopt-root >> text=Leave out basel_magic and re-plan', { timeout: 60000 }).then(() => true, () => false);
+check(leaveOut, 'failed seller offered to be left out');
+if (leaveOut) {
+  await page.click('#cmopt-root >> text=Leave out basel_magic and re-plan');
+  await page.waitForSelector('#cmopt-root >> text=Leave out basel_magic and re-plan', { state: 'detached', timeout: 30000 }).catch(() => {});
+  const after = await page.locator('#cmopt-root main').innerText();
+  if (!(/other_ch/.test(after) && !/basel_magic/.test(after))) console.log(after);
+  check(/other_ch/.test(after) && !/basel_magic/.test(after), 're-planned without basel_magic');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cmopt:settings')).excludeSellers);
+  check(/basel_magic/.test(saved), 'basel_magic saved under "Never buy from"');
+}
 
 await ctx.close();
 process.exitCode = failed ? 1 : 0;
