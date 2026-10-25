@@ -196,6 +196,21 @@ await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ pag
   if ((after.match(/In cart ✓/g) || []).length !== 4) fail('items not marked as in the cart');
   await page.screenshot({ path: 'e2e-out/complete-pages-3-cart.png' });
 
+  // A Bolt an earlier plan left in the cart (another seller's article): adding
+  // again warns that the cart would end up with too many Bolts.
+  cart.set('99', 2);
+  await page.evaluate(() => localStorage.setItem('cmopt:added', JSON.stringify([...JSON.parse(localStorage.getItem('cmopt:added') || '[]'),
+    { id: '99', name: 'Lightning Bolt', seller: 'old_seller', quantity: 2, at: Date.now() }])));
+  const ajaxBefore = requestedCount.ajax;
+  await page.click('#cmopt-root >> text=Add all to cart');
+  await page.waitForSelector('#cmopt-root >> text=from an earlier plan', { timeout: 30000 }).catch(() => {});
+  const warn = await page.locator('#cmopt-root main').innerText();
+  if (!/2× Lightning Bolt · old_seller/.test(warn) || !/6× Lightning Bolt \(this plan: 4\)/.test(warn)) fail(`no warning about leftovers: ${warn.slice(0, 500)}`);
+  if (requestedCount.ajax !== ajaxBefore) fail('added to the cart despite the warning');
+  await page.screenshot({ path: 'e2e-out/complete-pages-3b-leftovers.png' });
+  await page.click('#cmopt-root >> text=Cancel');
+  cart.delete('99');
+
   // Running it again sends nothing: everything is already in the cart.
   const posts = () => requestedCount.ajax;
   const sentBefore = posts();

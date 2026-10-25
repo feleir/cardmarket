@@ -1,6 +1,6 @@
 {
   "name": "cardmarket-optimizer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Wants-list cart optimizer for Cardmarket that runs as a bookmarklet (works on Chrome for Android) or userscript.",
   "type": "module",

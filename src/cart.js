@@ -17,6 +17,32 @@ const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
 export const cartLog = [];
 const note = (entry) => { cartLog.push({ at: new Date().toISOString(), ...entry }); if (cartLog.length > 200) cartLog.shift(); };
 
+// What this tool put in the cart, kept in the browser for 30 days, so a
+// later plan can tell copies left over from an earlier one.
+const ADDED_KEY = 'cmopt:added';
+function history() {
+  try {
+    const list = JSON.parse(localStorage.getItem(ADDED_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((e) => Date.now() - e.at < 30 * 864e5) : [];
+  } catch { return []; }
+}
+function remember(items) {
+  const ids = new Set(items.map((it) => it.offer.id));
+  const list = history().filter((e) => !ids.has(e.id));
+  for (const it of items) list.push({ id: it.offer.id, name: it.want?.name || it.offer.name || '', seller: it.offer.seller, quantity: it.quantity, at: Date.now() });
+  try { localStorage.setItem(ADDED_KEY, JSON.stringify(list.slice(-500))); } catch { /* ignore */ }
+}
+
+// Items an earlier plan added that are still in the cart, for cards the
+// given plan also buys elsewhere: adding the plan would buy those twice.
+export async function leftovers(planItems) {
+  const inCart = await cartArticleIds().catch(() => null);
+  if (!inCart || inCart.check) return [];
+  const planIds = new Set(planItems.map((it) => it.offer.id));
+  const names = new Set(planItems.map((it) => it.want?.name).filter(Boolean));
+  return history().filter((e) => inCart.has(e.id) && !planIds.has(e.id) && names.has(e.name));
+}
+
 // Article ids now in the cart.
 export async function cartArticleIds() {
   const r = await fetch(`/en/${game()}/ShoppingCart`, { credentials: 'include' });
@@ -239,6 +265,7 @@ export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
     if (inCart.check) check = true;
   }
   const added = items.filter((it) => inCart.has(it.offer.id));
+  remember(added);
   const failed = items.filter((it) => !inCart.has(it.offer.id));
   note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), check, ...(failed.length && !inCart.check ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
   for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : inCart.check ? 'unknown' : 'failed');

@@ -11,7 +11,7 @@ import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
 import { planOptions } from './options.js';
 import { optimize, printingOf } from './optimizer.js';
-import { addAll, cartLog, siteCartCode } from './cart.js';
+import { addAll, cartLog, siteCartCode, leftovers } from './cart.js';
 
 const KEY = 'cmopt:settings';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -356,7 +356,8 @@ export function mount() {
       if (!want.offers.length) throw new Error(`No offers for ${card.name} with your filters (countries, condition, language).`);
       x.want = want;
       x.plan = planExtra(st.result, solveWants(), want, optOptions());
-      x.msg = `${card.name}: ${want.offers.length} offer(s) found.`;
+      const planned = st.result.groups.flatMap((g) => g.items).filter((it) => it.want.name === card.name).reduce((n, it) => n + it.quantity, 0);
+      x.msg = `${card.name}: ${want.offers.length} offer(s) found.${planned ? ` The plan already buys ${planned}; these ${want.quantity} come on top.` : ''}`;
     } catch (e) {
       x.msg = e instanceof BlockedError ? e.message : e.message || String(e);
     }
@@ -499,12 +500,28 @@ export function mount() {
       }).join('')}</table></div>`;
   }
 
+  // Adding this plan would double cards an earlier plan left in the cart.
+  function viewCartWarn() {
+    const x = st.cartWarn;
+    if (!x) return '';
+    const plan = new Map();
+    for (const g of st.result.groups) for (const it of g.items) plan.set(it.want.name, (plan.get(it.want.name) || 0) + it.quantity);
+    const extra = new Map();
+    for (const e of x.left) extra.set(e.name, (extra.get(e.name) || 0) + e.quantity);
+    return `<div class="card"><p class="warn"><b>Your cart already has copies of these cards from an earlier plan:</b></p>
+      ${x.left.map((e) => `<div class="muted">${e.quantity}× ${esc(e.name)} · ${esc(e.seller)}</div>`).join('')}
+      <p>Adding this plan as well would buy ${[...extra].map(([n, k]) => `${plan.get(n) + k}× ${esc(n)} (this plan: ${plan.get(n)})`).join(', ')}.</p>
+      <p><a href="/en/${esc(game())}/ShoppingCart" target="_blank" rel="noopener">Open the cart</a> and remove them, then add again. Or:</p>
+      <p><button class="btn sm sec" data-act="cancelWarn">Cancel</button> <button class="btn sm" data-act="addForce">Add anyway</button></p></div>`;
+  }
+
   function viewResults() {
     const r = st.result;
     if (!r) return '<p class="muted">Run the optimizer first.</p>';
     const saved = r.baseline.total - r.total;
     const missing = r.missing.reduce((n, m) => n + m.count, 0);
     return `
+    ${viewCartWarn()}
     ${st.cartMsg ? `<div class="card"><p class="${st.cartMsg.ok ? 'ok' : 'warn'}">${esc(st.cartMsg.text)}</p>
       <p><a href="/en/${esc(game())}/ShoppingCart">Open the Cardmarket cart</a> to check items and the real shipping.</p>
       ${st.failedSellers?.length ? `<p class="muted">Not added from: ${st.failedSellers.map(esc).join(', ')}. A seller that does not ship to you cannot be added.</p>
@@ -825,8 +842,19 @@ export function mount() {
 
   // Sends the items, then checks the cart; the result per article is kept
   // so the Results tab can mark what is in the cart and what is not.
-  async function addItems(items, btn) {
+  async function addItems(items, btn, { force = false } = {}) {
     if (st.adding) return;
+    if (!force) {
+      // Copies an earlier plan put in the cart, of cards this plan buys too.
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking the cart…'; }
+      const left = await leftovers(st.result.groups.flatMap((g) => g.items));
+      if (left.length) {
+        st.cartWarn = { items, left };
+        render();
+        return;
+      }
+    }
+    st.cartWarn = null;
     st.adding = true;
     let sent = 0;
     const label = (txt) => { if (btn && btn.isConnected) btn.textContent = txt; };
@@ -896,6 +924,8 @@ export function mount() {
       case 'run': run(); break;
       case 'stop': st.fetcher?.stop(); break;
       case 'addAll': await addItems(st.result.groups.flatMap((g) => g.items), t); break;
+      case 'addForce': await addItems(st.cartWarn.items, t, { force: true }); break;
+      case 'cancelWarn': st.cartWarn = null; render(); break;
       case 'copy':
         try { await navigator.clipboard.writeText(asText()); t.textContent = 'Copied ✓'; } catch { prompt('Copy:', asText()); }
         break;
