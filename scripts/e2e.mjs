@@ -81,6 +81,10 @@ function sellerPage(seller, q) {
 // script sends the add-to-cart request when its button is pressed (here to
 // a mock AJAX endpoint); posting the form anywhere else does nothing.
 const cart = new Map();
+// Like Cardmarket, adding an article already in the cart adds to its amount.
+// cartLagMs: the cart page shows an article only this long after it was added.
+let cartLagMs = 0;
+const addedAt = new Map();
 const fieldsOf = (body) => Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
 // Like Cardmarket's jcp(): one XMLHttpRequest at a time, further presses
 // wait in jcpStack, and the server answers slowly. Closing the page while
@@ -108,12 +112,12 @@ function cartRoute(u, req) {
     if (f.__cmtkn !== 'tok123') return '{"error":"token"}';
     for (const k of Object.keys(f)) {
       const m = k.match(/^idArticle\[(\d+)\]$/);
-      if (m) cart.set(m[1], Number(f[`amount[${m[1]}]`]));
+      if (m) { cart.set(m[1], (cart.get(m[1]) || 0) + Number(f[`amount[${m[1]}]`])); addedAt.set(m[1], Date.now()); }
     }
     return '{"ok":true}';
   }
   if (req.method() === 'POST') return '<html><body>home</body></html>'; // what PostGetAction did live
-  if (u.pathname === '/en/Magic/ShoppingCart') return `<html><body>${[...cart].map(([id, n]) => `<div id="articleRow${id}">${n}</div>`).join('')}</body></html>`;
+  if (u.pathname === '/en/Magic/ShoppingCart') return `<html><body>${[...cart].filter(([id]) => Date.now() - (addedAt.get(id) || 0) >= cartLagMs).map(([id, n]) => `<div id="articleRow${id}">${n}</div>`).join('')}</body></html>`;
   return null;
 }
 
@@ -230,6 +234,20 @@ await scenario('complete-pages', { scanMode: 'auto' }, '76,53 €', async ({ pag
   await idle();
   if (!/Cardmarket is showing its browser check/.test(await page.locator('#cmopt-root main').innerText())) fail('browser check not reported');
   checkPages = false;
+
+  // A cart page slower than the check: items Cardmarket accepted but the cart
+  // does not show yet are reported, never pressed a second time.
+  cart.clear();
+  cartLagMs = 120000;
+  await page.click('#cmopt-root button[data-act="addAll"]');
+  await page.waitForTimeout(300);
+  await idle();
+  const lagged = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
+  if (lagged !== '10x3 12x1 21x1 31x2') fail(`slow cart: items pressed twice? cart holds ${lagged}`);
+  if (!/sent to Cardmarket but the cart does not show them/.test(await page.locator('#cmopt-root main').innerText())) fail('slow cart: unconfirmed items not reported');
+  const lagText = await page.locator('#cmopt-root main').innerText();
+  if ((lagText.match(/Sent · check cart/g) || []).length !== 4) fail(`slow cart: items not marked "Sent · check cart": ${lagText.slice(0, 1500)}`);
+  cartLagMs = 0;
 
   // Add a card: 4 Tinder Walls. geneva_tcg's parcel is already tracked, so
   // copies join it for no extra shipping (0,35 each); zurich_cards has 3

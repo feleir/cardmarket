@@ -308,6 +308,7 @@ export function mount() {
   function cartButton(it, gi, ii) {
     const state = st.cartState.get(it.offer.id);
     if (state === 'added') return '<span class="ok">In cart ✓</span>';
+    if (state === 'unconfirmed') return `<a class="warn" href="/en/${esc(game())}/ShoppingCart" target="_blank" rel="noopener">Sent · check cart</a>`;
     if (state === 'failed') return `<a class="warn" href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">Not added · open</a>`;
     return `<button class="btn sm sec" data-add="${gi}:${ii}">Add</button>`;
   }
@@ -500,6 +501,19 @@ export function mount() {
       }).join('')}</table></div>`;
   }
 
+  // The same card on the list more than once: each entry is bought.
+  function viewDuplicates() {
+    const by = new Map();
+    for (const w of st.wants || []) {
+      const k = w.name.toLowerCase();
+      by.set(k, [...(by.get(k) || []), w]);
+    }
+    const dup = [...by.values()].filter((l) => l.length > 1);
+    if (!dup.length) return '';
+    return `<div class="card"><p class="warn">On your list more than once, and bought for every entry:</p>
+      ${dup.map((l) => `<div class="muted">${esc(l[0].name)}: ${l.map((w) => `${w.quantity}${w.expansion ? ` (${esc(w.expansion)})` : ''}`).join(' + ')} = ${l.reduce((n, w) => n + w.quantity, 0)}</div>`).join('')}</div>`;
+  }
+
   // Adding this plan would double cards an earlier plan left in the cart.
   function viewCartWarn() {
     const x = st.cartWarn;
@@ -522,6 +536,7 @@ export function mount() {
     const missing = r.missing.reduce((n, m) => n + m.count, 0);
     return `
     ${viewCartWarn()}
+    ${viewDuplicates()}
     ${st.cartMsg ? `<div class="card"><p class="${st.cartMsg.ok ? 'ok' : 'warn'}">${esc(st.cartMsg.text)}</p>
       <p><a href="/en/${esc(game())}/ShoppingCart">Open the Cardmarket cart</a> to check items and the real shipping.</p>
       ${st.failedSellers?.length ? `<p class="muted">Not added from: ${st.failedSellers.map(esc).join(', ')}. A seller that does not ship to you cannot be added.</p>
@@ -860,7 +875,7 @@ export function mount() {
     const label = (txt) => { if (btn && btn.isConnected) btn.textContent = txt; };
     if (btn) btn.disabled = true;
     try {
-      const { added, failed, check } = await addAll(items, (it, state) => {
+      const { added, failed, unconfirmed, check } = await addAll(items, (it, state) => {
         if (state === 'sent') label(`Sending ${++sent}/${items.length}…`);
         else if (state !== 'unknown') st.cartState.set(it.offer.id, state);
         if (sent === items.length) label('Checking the cart…');
@@ -870,7 +885,8 @@ export function mount() {
       st.cartMsg = check
         ? { ok: false, text: `Cardmarket is showing its browser check ("Just a moment…"), so adding stopped${added.length ? ` after ${added.length} item(s)` : ''}. Open any Cardmarket page in this tab, wait until the check passes (tick the box if asked), then run cmopt and tap "Add all to cart" again. Items already in your cart stay there and are skipped.` }
         : failed.length
-          ? { ok: false, text: `${added.length} of ${items.length} added to your cart. ${failed.length} could not be added; they are marked below with a link to the card.` }
+          ? { ok: false, text: `${added.length} of ${items.length} added to your cart. ${failed.length} could not be added; they are marked below with a link to the card.${unconfirmed.length
+            ? ` ${unconfirmed.length} of them were sent to Cardmarket but the cart does not show them (yet): open the cart and check before adding them again, so nothing is bought twice.` : ''}` }
           : { ok: true, text: `All ${added.length} added to your cart.` };
     } catch (e) {
       st.cartMsg = { ok: false, text: 'Adding to the cart failed: ' + (e.message || e) };

@@ -14,8 +14,14 @@ import { isChallengePage } from './parse.js';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
 
-export const cartLog = [];
-const note = (entry) => { cartLog.push({ at: new Date().toISOString(), ...entry }); if (cartLog.length > 200) cartLog.shift(); };
+// Kept in the browser too, so a debug report after a reload still has it.
+const LOG_KEY = 'cmopt:cartlog';
+export const cartLog = (() => { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { return []; } })();
+const note = (entry) => {
+  cartLog.push({ at: new Date().toISOString(), ...entry });
+  if (cartLog.length > 200) cartLog.shift();
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(cartLog.slice(-60))); } catch { /* ignore */ }
+};
 
 // What this tool put in the cart, kept in the browser for 30 days, so a
 // later plan can tell copies left over from an earlier one.
@@ -45,7 +51,7 @@ export async function leftovers(planItems) {
 
 // Article ids now in the cart.
 export async function cartArticleIds() {
-  const r = await fetch(`/en/${game()}/ShoppingCart`, { credentials: 'include' });
+  const r = await fetch(`/en/${game()}/ShoppingCart`, { credentials: 'include', cache: 'no-store' });
   const html = await r.text();
   // The browser check instead of the cart: nothing can be told about it.
   if (isChallengePage(html)) return Object.assign(new Set(), { html: '', check: true });
@@ -187,7 +193,9 @@ function pressAdd(doc, offer, amount) {
   return '';
 }
 
+// Returns the article ids whose cart button was pressed.
 async function pressAll(items, onEach, pause) {
+  const pressed = new Set();
   const byPage = new Map();
   for (const it of items) {
     const url = pageOf(it);
@@ -217,6 +225,7 @@ async function pressAll(items, onEach, pause) {
     for (const it of list) {
       const before = w.messages.length;
       const problem = pressAdd(doc, it.offer, it.quantity);
+      if (!problem) pressed.add(it.offer.id);
       const finished = problem ? true : await settled(win, w);
       note({ step: 'press', url, article: it.offer.id, seller: it.offer.seller, amount: it.quantity,
         ...(problem ? { error: problem } : {}), ...(lastRowHtml ? { row: lastRowHtml } : {}), ...(finished ? {} : { error: 'no answer from Cardmarket within 15 s' }),
@@ -226,10 +235,13 @@ async function pressAll(items, onEach, pause) {
     await settled(win, w, { min: 300 });
     frame.remove();
   }
+  return pressed;
 }
 
 // items: [{ offer, want, quantity }]. onEach(item, state): 'sent' | 'added' | 'failed'.
-// Anything not in the cart after the first pass is pressed once more.
+// An item whose button was pressed is never pressed again: if the cart does
+// not show it yet, pressing again could buy it twice (Cardmarket adds the
+// amount on top). Only items whose page could not be opened are retried.
 // Returns { added, failed, check } where check means Cardmarket's browser
 // check stopped the run (the user has to pass it in the tab, then retry).
 export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
@@ -244,19 +256,26 @@ export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
   const toSend = items.filter((it) => !before.has(it.offer.id));
   if (toSend.length < items.length) note({ step: 'skip', alreadyInCart: items.length - toSend.length });
   items.filter((it) => before.has(it.offer.id)).forEach((it) => onEach?.(it, 'sent'));
+  let pressed = new Set();
   try {
-    await pressAll(toSend, onEach, pauseMs);
+    pressed = await pressAll(toSend, onEach, pauseMs);
   } catch (e) {
     if (!(e instanceof CheckPageError)) throw e;
     check = true;
   }
   let inCart = await cartArticleIds();
   if (inCart.check) check = true;
-  const retry = check ? [] : items.filter((it) => !inCart.has(it.offer.id));
+  // The cart can lag behind the last answers: look again before judging.
+  if (!check && items.some((it) => !inCart.has(it.offer.id))) {
+    await sleep(3000);
+    inCart = await cartArticleIds();
+    if (inCart.check) check = true;
+  }
+  const retry = check ? [] : items.filter((it) => !inCart.has(it.offer.id) && !pressed.has(it.offer.id) && !before.has(it.offer.id));
   if (retry.length) {
     note({ step: 'retry', articles: retry.map((i) => i.offer.id) });
     try {
-      await pressAll(retry, null, pauseMs);
+      for (const id of await pressAll(retry, null, pauseMs)) pressed.add(id);
     } catch (e) {
       if (!(e instanceof CheckPageError)) throw e;
       check = true;
@@ -267,9 +286,12 @@ export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
   const added = items.filter((it) => inCart.has(it.offer.id));
   remember(added);
   const failed = items.filter((it) => !inCart.has(it.offer.id));
-  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), check, ...(failed.length && !inCart.check ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
-  for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : inCart.check ? 'unknown' : 'failed');
-  return { added, failed, check };
+  const unconfirmed = failed.filter((it) => pressed.has(it.offer.id));
+  // They may still turn up in the cart: remembered, so a later plan warns.
+  remember(unconfirmed);
+  note({ step: 'check', added: added.length, failed: failed.map((i) => i.offer.id), unconfirmed: unconfirmed.map((i) => i.offer.id), check, ...(failed.length && !inCart.check ? { evidence: cartEvidence(inCart.html, failed) } : {}) });
+  for (const it of items) onEach?.(it, inCart.has(it.offer.id) ? 'added' : inCart.check ? 'unknown' : pressed.has(it.offer.id) ? 'unconfirmed' : 'failed');
+  return { added, failed, unconfirmed, check };
 }
 
 // What the live page's own cart code looks like, for the debug report when
