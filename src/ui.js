@@ -761,6 +761,8 @@ export function mount() {
       settings: { source: s.source, homeCountry: s.homeCountry, sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
       wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length, notFound: wants.filter((w) => w.notFound).map((w) => w.name),
       firstWants: wants.slice(0, 3).map(pick),
+      // Every entry as read: [id, name, quantity, expansion or '', any printing?]
+      list: wants.map((w) => [w.idWant, w.name, w.quantity, w.expansion || '', w.kind === 'card' ? 1 : 0]),
       wantsRowHtml: wants[0]?.rowHtml,
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
