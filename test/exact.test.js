@@ -60,3 +60,32 @@ test('exact model applies the printing preference too', async () => {
   const ex0 = solveWith(h, wants, { shipping: flat, printingPremium: 0 });
   assert.deepEqual(ex0.picks[0], [{ id: 'other', count: 1 }]);
 });
+
+// Cardmarket's published tiers to Switzerland, with sellers from four
+// countries (letters from Germany stop at 4 cards, then parcels) and Swiss
+// VAT on the stores: still close to the proven optimum, and no single-card
+// parcel whose seller dropping would save more than a fraction of a percent
+// (the exact solver, when on, closes that last gap).
+test('published shipping tiers: near the optimum, no single-card parcel worth dropping', async () => {
+  const { shippingFor } = await import('../src/shipping.js');
+  const shipping = shippingFor('CH');
+  const h = await highs();
+  const gaps = [];
+  for (let seed = 1; seed <= 4; seed++) {
+    const inst = realisticInstance(seed * 977, { wants: 25, small: 16, big: 4, countries: ['CH', 'DE', 'FR', 'AT'] });
+    for (const w of inst) for (const o of w.offers) if (o.seller.startsWith('store')) { o.vat = 8.1; o.listedPrice = Math.round((o.price / 1.081) * 100) / 100; }
+    const ex = solveWith(h, inst, { shipping, timeLimitMs: 30000 });
+    assert.equal(ex.status, 'Optimal');
+    const r = optimize(inst, { shipping, timeBudgetMs: 800, seed });
+    const opt = Math.round(ex.objective * 100) / 100;
+    assert.ok(r.total >= opt - 0.01, 'cannot beat a proven optimum');
+    gaps.push((r.total - opt) / opt);
+    for (const g of r.groups.filter((x) => x.cards === 1)) {
+      const without = inst.map((w) => ({ ...w, offers: w.offers.filter((o) => o.seller !== g.seller) }));
+      const ex2 = solveWith(h, without, { shipping, timeLimitMs: 30000 });
+      const complete = ex2.picks.every((p, wi) => p.reduce((n, x) => n + x.count, 0) === inst[wi].quantity);
+      if (complete) assert.ok(ex2.objective >= r.total * 0.995, `dropping ${g.seller} would save ${(r.total - ex2.objective).toFixed(2)}`);
+    }
+  }
+  assert.ok(Math.max(...gaps) < 0.005, `max gap ${(Math.max(...gaps) * 100).toFixed(3)}%`);
+});
