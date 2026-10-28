@@ -46,7 +46,7 @@ test('deck cards are read from their card page, or found with the search', async
     doc: async (u) => { fetched.push(u); const h = pages[u.split('?')[0]]; return h ? doc(h) : null; } };
   const wants = deckWants([{ name: 'Lightning Bolt', quantity: 4 }, { name: 'Aether Vial', quantity: 1 }, { name: 'Made Up Card', quantity: 1 }]);
   const log = [];
-  await collectDeck(fetcher, wants, { ...DEFAULT_SETTINGS }, 'Magic', null, (m) => log.push(m));
+  await collectDeck(fetcher, wants, { ...DEFAULT_SETTINGS, sellerCountries: [4] }, 'Magic', null, (m) => log.push(m));
   assert.deepEqual(wants.map((w) => [w.name, w.offers.length, !!w.notFound]), [['Lightning Bolt', 1, false], ['Aether Vial', 1, false], ['Made Up Card', 0, true]]);
   assert.equal(wants[1].url, '/en/Magic/Cards/AEther-Vial');
   assert.ok(fetched[0].startsWith('/en/Magic/Cards/Lightning-Bolt?sellerCountry=4'));

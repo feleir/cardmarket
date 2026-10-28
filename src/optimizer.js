@@ -41,7 +41,7 @@ export function optimize(wants, opts = {}) {
   const premium = Number(opts.printingPremium) || 0;
   const costOf = (o) => o.price + (o.otherPrinting ? premium : 0);
   // What a copy counts toward a parcel's value for the shipping steps (the
-  // 25 € tracked limit): by default the seller's price before the Swiss VAT
+  // 25 € tracked limit): by default the seller's price before the VAT
   // Cardmarket adds on top; with vatInParcelValue, the price with VAT.
   // Keeping the copies of a card in one printing: every extra printing a
   // card's copies come from counts this much when choosing.

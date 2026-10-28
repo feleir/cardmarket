@@ -9,7 +9,7 @@ import { highs } from '../test/exact.js';
 
 const data = JSON.parse(await readFile(process.argv[2], 'utf8'));
 if (data.tool !== 'cmopt-cart2') throw new Error('expected a cmopt-cart2 blob');
-const shipping = { CH: data.shipping.CH, default: data.shipping.default };
+const { penalty, maxSellers, ...shipping } = data.shipping;
 const wants = data.wants.map(([name, quantity, rows, printings = []], wi) => ({
   key: `w${wi}`, name, quantity,
   offers: rows.map(([s, price, available, , printing], i) => {

@@ -320,5 +320,18 @@ await scenario('decklist', {
     await page.locator('#cmopt-root select[data-printing]').selectOption('');
     await page.waitForFunction(() => /6,56 €/.test(document.querySelector('#cmopt-root').shadowRoot.querySelector('main').innerText), null, { timeout: 30000 }).catch(() => fail('back to "As in Setup" did not restore 6,56 €'));
   }
+
+  // Older settings with Swiss sellers count as living in Switzerland; another
+  // home country gets its own tiers, and switching back restores the Swiss ones.
+  await page.click('#cmopt-root [data-tab="setup"]');
+  const homeSel = page.locator('#cmopt-root select[data-k="homeCountry"]');
+  if ((await homeSel.inputValue()) !== 'CH') fail(`home country not taken from older settings: ${await homeSel.inputValue()}`);
+  const chTiers = () => page.locator('#cmopt-root textarea[data-ship="CH"]').inputValue();
+  if (!(await chTiers()).startsWith('4 25 1.83')) fail(`Swiss tiers missing: ${await chTiers()}`);
+  await homeSel.selectOption('DE');
+  if (!(await page.locator('#cmopt-root textarea[data-ship="DE"]').count())) fail('no domestic tiers for Germany');
+  if ((await chTiers()).startsWith('4 25 1.83')) fail('Swiss domestic tiers used for a buyer in Germany');
+  await homeSel.selectOption('CH');
+  if (!(await chTiers()).startsWith('4 25 1.83')) fail('Swiss tiers not restored');
 });
 await browser.close();

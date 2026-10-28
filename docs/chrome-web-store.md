@@ -15,7 +15,7 @@ The package is `dist/cardmarket-optimizer-extension.zip` (built by `npm run buil
   Cardmarket's Shopping Wizard often misses cheaper carts. This extension reads your wants list and the offers for every card, and then finds the combination of sellers with the lowest total, shipping included. It weighs cheaper copies against extra parcels and bundles cards where that saves money.
 
   - Choose which seller countries to buy from, minimum condition, languages, seller rating.
-  - Counts shipping per parcel, tracked shipping above 25 €, sellers that ship tracked only, and Swiss VAT on professional sellers.
+  - Counts shipping per parcel, tracked shipping above 25 €, sellers that ship tracked only, and the VAT Cardmarket adds on top of some sellers' prices outside the EU (e.g. Switzerland).
   - "Any printing" with a preference for the printing on your list unless another saves enough.
   - Reads the full stock of the most promising sellers (filtered by your wants list) to find bundles hidden in long offer lists.
   - Optional exact solver that proves the cheapest cart.

@@ -65,7 +65,7 @@ test('filters become Cardmarket query parameters', () => {
   const want = { languages: [3, 1], minCondition: 3, flags: { isFoil: 'N' } };
   const f = wantFilters(want, { ...DEFAULT_SETTINGS, sellerCountries: [7, 4] });
   assert.equal(filterQuery(f), 'sellerCountry=4,7&language=1,3&minCondition=3&isFoil=N&isSigned=N&isAltered=N');
-  const g = wantFilters(want, { ...DEFAULT_SETTINGS, languages: [2], minCondition: 2, foil: 'any' });
+  const g = wantFilters(want, { ...DEFAULT_SETTINGS, sellerCountries: [4], languages: [2], minCondition: 2, foil: 'any' });
   assert.equal(filterQuery(g), 'sellerCountry=4&language=2&minCondition=2&isSigned=N&isAltered=N');
 });
 
@@ -267,10 +267,10 @@ test('any printing: a want for one printing also gets offers for its other print
   };
   const want = { idWant: '1', kind: 'product', name: 'Aquamoeba', url: `${P}/Torment/Aquamoeba?sellerCountry=4`, expansion: 'Torment', quantity: 4, languages: [], minCondition: 5, flags: {} };
 
-  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: false });
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, sellerCountries: [4], anyPrinting: false });
   assert.deepEqual(want.offers.map((o) => o.id), ['1']);
 
-  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, anyPrinting: true });
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, sellerCountries: [4], anyPrinting: true });
   assert.deepEqual(want.offers.map((o) => [o.id, o.expansion, o.otherPrinting]), [['1', 'Torment', false], ['2', 'Dominaria Remastered', true]]);
   assert.ok(fetched.some((u) => u.startsWith('/en/Magic/Cards/Aquamoeba?sellerCountry=4')));
   // A seller-scan offer of another printing now matches too.

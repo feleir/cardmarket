@@ -1,6 +1,6 @@
 # Cardmarket Optimizer
 
-Reads a Cardmarket wants list and builds the cheapest cart it can find, counting shipping. You choose which seller countries to buy from (for example, Switzerland only), and it can then put the result in your Cardmarket cart.
+Reads a Cardmarket wants list (or a pasted decklist) and builds the cheapest cart it can find, counting shipping to where you live. You choose which seller countries to buy from (any, or for example only your own), and it can then put the result in your Cardmarket cart. Nothing is tied to one country: you pick yours, and shipping estimates are kept per home country.
 
 It runs inside cardmarket.com in your own logged-in browser, including **Chrome on Android**. Nothing runs on a server.
 
@@ -47,6 +47,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
 ## How to use
 
 1. **Setup:**
+   - **You live in**: your country. Shipping costs depend on where parcels go, so the shipping estimates are kept per home country (switching keeps each country's tiers). Default tiers are rough estimates except the Swiss letter price; edit them under **Shipping estimates**. **Only <your country>** picks just your country as the seller allow list.
    - **What to buy**: a Cardmarket wants list, or **a decklist** pasted from Moxfield, Archidekt, MTGGoldfish, MTGTop8, Arena or MTGO (`4 Lightning Bolt`, `4x Lightning Bolt (M10) 146`, `SB: 2 Duress`, section headings). Set codes and foil markers are ignored: a decklist always means any printing of each card. Options: include the sideboard, skip basic lands. Cards the site doesn't know by that name are looked up with Cardmarket's search, and the ones still not found are listed. The seller scan needs a wants list, so it doesn't run for a decklist; if card pages are cut off, import the deck into a Cardmarket wants list (Wants → Add decklist) and use that instead.
    - Tap the seller countries you allow.
    - Optionally override language, minimum condition and foil. Otherwise each want's own settings are used.

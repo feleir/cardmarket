@@ -56,18 +56,20 @@ export const RATINGS = {
 
 // Shipping is estimated per seller from tiers: the cheapest tier whose card
 // and value limits fit the parcel is used. Cardmarket makes tracked shipping
-// mandatory above 25 EUR, which is why the untracked tiers stop there. The
-// figures are estimates; the user can edit them per seller country.
-export const DEFAULT_SHIPPING = {
-  default: [
+// mandatory above 25 EUR, which is why the untracked tiers stop there. What a
+// parcel costs depends on where the buyer lives, so the tiers are kept per
+// home country, keyed by the seller's country. The figures are estimates;
+// the user can edit them.
+const GENERIC_TIERS = [
     { maxCards: 4, maxValue: 25, price: 1.4 },
     { maxCards: 17, maxValue: 25, price: 2.1 },
     { maxCards: 40, maxValue: 25, price: 3.2 },
     { maxCards: 40, maxValue: 250, price: 6.5 },
     { maxCards: 100000, maxValue: 100000, price: 12 },
-  ],
-  // Cheapest letter as Cardmarket shows it within Switzerland (user-confirmed);
-  // the larger tiers are still estimates.
+];
+// Known domestic tiers, by home country. Switzerland: the cheapest letter as
+// Cardmarket shows it (user-confirmed); the larger tiers are estimates.
+const DOMESTIC = {
   CH: [
     { maxCards: 4, maxValue: 25, price: 1.83 },
     { maxCards: 17, maxValue: 25, price: 2.6 },
@@ -76,6 +78,9 @@ export const DEFAULT_SHIPPING = {
     { maxCards: 100000, maxValue: 100000, price: 11 },
   ],
 };
+export const defaultShipping = (home) => ({ default: GENERIC_TIERS, ...(DOMESTIC[home] ? { [home]: DOMESTIC[home] } : {}) });
+// Before the home country setting: the Swiss defaults.
+export const DEFAULT_SHIPPING = defaultShipping('CH');
 
 // Printings that are not tournament-legal. Cardmarket names the World
 // Championship decks "WCD <year>: <player>" (and the 1996 set "Pro Tour
@@ -92,7 +97,8 @@ export const DEFAULT_SETTINGS = {
   deckText: '',
   deckSideboard: true,
   deckSkipBasics: true,
-  sellerCountries: [4],
+  homeCountry: '',         // where the buyer lives (country code); shipping depends on it
+  sellerCountries: [],    // [] = every country
   languages: [],          // empty = use what each want says
   minCondition: 0,        // 0 = use what each want says
   foil: 'want',           // 'want' | 'Y' | 'N' | 'any'
@@ -108,7 +114,7 @@ export const DEFAULT_SETTINGS = {
   maxVersions: 12,
   maxSellers: 0,          // 0 = unlimited
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels
-  vatInParcelValue: false, // count Swiss VAT toward the 25 € tracked-shipping limit
+  vatInParcelValue: false, // count the VAT Cardmarket adds toward the 25 € tracked-shipping limit
   delayMs: 2000,
   timeBudgetMs: 3000,
   scanMode: 'auto',       // 'auto' (only if a card page was cut off) | 'always' | 'off'
@@ -116,5 +122,6 @@ export const DEFAULT_SETTINGS = {
   exact: false,           // also run the exact solver (downloads ~3.5 MB once)
   exactTimeMs: 15000,
   cacheMinutes: 30,
-  shipping: DEFAULT_SHIPPING,
+  shipping: defaultShipping(''),
+  shippingByHome: {},     // other home countries' tiers, kept when switching
 };

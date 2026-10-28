@@ -1,7 +1,7 @@
 // The overlay panel: settings, progress and results. Rendered into a shadow
 // root so Cardmarket's styles and ours cannot interfere. Built for a phone
 // screen first; on desktop it is a side panel.
-import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS } from './constants.js';
+import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS, defaultShipping } from './constants.js';
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
@@ -25,9 +25,15 @@ function loadSettings() {
     if (s) {
       if (OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions)) s.excludeExpansions = DEFAULT_EXCLUDED_EXPANSIONS;
       if (s.delayMs === 1200) s.delayMs = DEFAULT_SETTINGS.delayMs; // the old default, before Cardmarket's browser checks
+      // Settings from before the home country setting: Swiss if they bought
+      // from Switzerland (the tiers then were Swiss), otherwise not set.
+      if (s.homeCountry === undefined) {
+        s.homeCountry = (s.sellerCountries || []).includes(4) ? 'CH' : '';
+        if (s.homeCountry !== 'CH' && s.shipping?.CH && JSON.stringify(s.shipping.CH) === JSON.stringify(DEFAULT_SHIPPING.CH)) delete s.shipping.CH;
+      }
       const ch = s.shipping?.CH?.map((t) => t.price).join();
-      if (ch && OLD_CH_TIERS.some((old) => old.join() === ch)) s.shipping.CH = DEFAULT_SHIPPING.CH;
-      return { ...DEFAULT_SETTINGS, ...s, shipping: { ...DEFAULT_SHIPPING, ...(s.shipping || {}) } };
+      if (s.homeCountry === 'CH' && ch && OLD_CH_TIERS.some((old) => old.join() === ch)) s.shipping.CH = DEFAULT_SHIPPING.CH;
+      return { ...DEFAULT_SETTINGS, ...s, shipping: { ...defaultShipping(s.homeCountry), ...(s.shipping || {}) } };
     }
   } catch { /* fall through */ }
   return structuredClone(DEFAULT_SETTINGS);
@@ -180,7 +186,8 @@ export function mount() {
     const q = st.countryFilter.toLowerCase();
     const countries = [...COUNTRIES].sort((a, b) => (sel.has(b.id) - sel.has(a.id)) || a.name.localeCompare(b.name))
       .filter((c) => !q || sel.has(c.id) || c.name.toLowerCase().includes(q));
-    const shipCodes = ['default', ...COUNTRIES.filter((c) => sel.has(c.id)).map((c) => c.code)];
+    const home = COUNTRIES.find((c) => c.code === s.homeCountry);
+    const shipCodes = ['default', ...new Set([...(home ? [home.code] : []), ...COUNTRIES.filter((c) => sel.has(c.id)).map((c) => c.code)])];
     return `
     <section><h2>What to buy</h2>
       <div class="chips" style="margin-bottom:10px">
@@ -189,10 +196,18 @@ export function mount() {
       </div>
       ${s.source === 'deck' ? viewDeck(s) : viewWantsPicker()}
     </section>
+    <section><h2>You live in</h2>
+      <select data-k="homeCountry">
+        <option value="">Choose your country…</option>
+        ${[...COUNTRIES].sort((a, b) => a.name.localeCompare(b.name)).map((c) => `<option value="${c.code}" ${s.homeCountry === c.code ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
+      <p class="${home ? 'muted' : 'warn'}">${home ? 'Shipping estimates are for parcels to ' + esc(home.name) + '. Each country you pick keeps its own tiers (Setup → Shipping estimates).' : 'Pick your country: shipping costs depend on where the parcels go.'}</p>
+    </section>
     <section><h2>Seller countries (allow list)</h2>
       <input type="text" placeholder="Filter countries…" data-k="countryFilter" value="${esc(st.countryFilter)}">
       <div class="chips" style="margin-top:8px">${countries.map((c) => `<button class="chip ${sel.has(c.id) ? 'on' : ''}" data-country="${c.id}">${esc(c.name)}</button>`).join('')}</div>
-      <p class="muted">${sel.size ? `${sel.size} selected — only these sellers are considered.` : 'None selected — sellers from every country are considered.'}</p>
+      <p class="muted">${sel.size ? `${sel.size} selected — only these sellers are considered.` : 'None selected — sellers from every country are considered.'}
+        ${home && !(sel.size === 1 && sel.has(home.id)) ? ` <button class="btn sm sec" data-act="onlyHome">Only ${esc(home.name)}</button>` : ''}</p>
     </section>
     <section><h2>Cards</h2>
       <label>Languages (overrides the wants list)</label>
@@ -247,12 +262,12 @@ export function mount() {
         <div><label>Sellers to scan</label><input type="number" min="1" max="50" data-k="scanSellers" value="${s.scanSellers}"></div>
       </div>
       <p class="muted">Card pages show the cheapest offers first and hold the rest back. <b>Auto</b> reads the top sellers' whole stock (filtered by your wants list) only when some card page was cut off, so sellers hidden there are not missed. If every page showed all its offers, the card scan is already complete and this is skipped.</p>
-      <label><input type="checkbox" data-k="exact" ${s.exact ? 'checked' : ''}> Exact solver — proves the cheapest cart (downloads ≈3.5 MB once; not used with a seller cap)</label>
+      <label><input type="checkbox" data-k="exact" ${s.exact ? 'checked' : ''}> Exact solver — proves the cheapest cart (downloads ≈3.5 MB once)</label>
       <details><summary>Shipping estimates</summary>
-        <label><input type="checkbox" data-k="vatInParcelValue" ${s.vatInParcelValue ? 'checked' : ''}> Count Swiss VAT toward the 25 € tracked-shipping limit</label>
-        <p class="muted">Off (as Cardmarket does it): a parcel's value is the sellers' prices before the 8.1% VAT. Enter the tiers below before VAT; for sellers whose prices carry the VAT note, VAT is added to their shipping too, as on Cardmarket.</p>
-        <p class="muted">One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. Check real prices for your country on Cardmarket's Shipping Costs help page.</p>
-        ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}`}</label>
+        <label><input type="checkbox" data-k="vatInParcelValue" ${s.vatInParcelValue ? 'checked' : ''}> Count added VAT toward the 25 € tracked-shipping limit</label>
+        <p class="muted">For countries where Cardmarket adds VAT on top of some sellers' prices (their offers carry a VAT note). Off (as Cardmarket does it): a parcel's value is the sellers' prices before that VAT. Enter the tiers below before VAT; for those sellers, VAT is added to their shipping too, as on Cardmarket.</p>
+        <p class="muted">${home ? `To ${esc(home.name)}. ` : ''}One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. The defaults are rough estimates${s.homeCountry === 'CH' ? ' (the Swiss letter price is real)' : ''}: check real prices on Cardmarket's Shipping Costs help page, or in your cart.</p>
+        ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}${code === s.homeCountry ? ' (within your country)' : ''}`}</label>
           <textarea data-ship="${code}">${esc(formatTiers(s.shipping[code] || s.shipping.default))}</textarea>`).join('')}
       </details>
       <details><summary>Advanced</summary>
@@ -601,6 +616,7 @@ export function mount() {
     if (deckMode && !deck.length) { st.log = ['Paste a decklist first (Setup → What to buy).']; st.tab = 'run'; render(); return; }
     if (!deckMode && !st.listUrl) { st.log = ['Pick a wants list first.']; st.tab = 'run'; render(); return; }
     st.running = true; st.tab = 'run'; st.log = []; st.progress = 0;
+    if (!st.settings.homeCountry) st.log.push('Tip: pick your country under Setup → "You live in", so the shipping estimates fit where the parcels go.');
     render();
     const s = st.settings;
     // One fetcher for the whole session keeps its in-memory cache, so a
@@ -711,7 +727,8 @@ export function mount() {
     });
     return JSON.stringify({
       tool: 'cmopt-cart2', mix: s.samePrinting ? Number(s.mixPremium) || 0 : 0, at: new Date().toISOString().slice(0, 16),
-      shipping: { CH: s.shipping.CH, default: s.shipping.default, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
+      home: s.homeCountry,
+      shipping: { ...s.shipping, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
       total: r?.total, exact: r?.exact || '',
       sellers, // [name, country, tracked only, VAT %]
       wants, // [name, quantity, [[seller#, price, available, bought?, printing#?]], printings?, choice?]
@@ -725,7 +742,7 @@ export function mount() {
     const pick = (w) => w && { name: w.name, url: w.url, kind: w.kind, quantity: w.quantity, languages: w.languages, minCondition: w.minCondition, flags: w.flags, maxPrice: w.maxPrice, expansion: w.expansion };
     return JSON.stringify({
       tool: 'cmopt', at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
-      settings: { source: s.source, sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
+      settings: { source: s.source, homeCountry: s.homeCountry, sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
       wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length, notFound: wants.filter((w) => w.notFound).map((w) => w.name),
       firstWants: wants.slice(0, 3).map(pick),
       wantsRowHtml: wants[0]?.rowHtml,
@@ -941,6 +958,12 @@ export function mount() {
       case 'stop': st.fetcher?.stop(); break;
       case 'addAll': await addItems(st.result.groups.flatMap((g) => g.items), t); break;
       case 'addForce': await addItems(st.cartWarn.items, t, { force: true }); break;
+      case 'onlyHome': {
+        const home = COUNTRIES.find((c) => c.code === st.settings.homeCountry);
+        if (home) update({ sellerCountries: [home.id] });
+        render();
+        break;
+      }
       case 'cancelWarn': st.cartWarn = null; render(); break;
       case 'copy':
         try { await navigator.clipboard.writeText(asText()); t.textContent = 'Copied ✓'; } catch { prompt('Copy:', asText()); }
@@ -1009,7 +1032,12 @@ export function mount() {
         break;
       }
       case 'clearCache': Fetcher.clearCache(); st.fetcher = null; st.wants = null; t.textContent = 'Cleared ✓'; break;
-      case 'reset': st.settings = structuredClone(DEFAULT_SETTINGS); saveSettings(st.settings); render(); break;
+      case 'reset': {
+        // Back to the defaults, but still living in the same country.
+        const home = st.settings.homeCountry;
+        st.settings = { ...structuredClone(DEFAULT_SETTINGS), homeCountry: home, shipping: defaultShipping(home) };
+        saveSettings(st.settings); render(); break;
+      }
       default:
     }
   });
@@ -1028,6 +1056,14 @@ export function mount() {
     }
     const k = t.dataset.k;
     if (!k || k === 'countryFilter') return;
+    if (k === 'homeCountry') {
+      // Each home country keeps its own tiers.
+      const old = st.settings.homeCountry;
+      const byHome = { ...(st.settings.shippingByHome || {}), [old || '_']: st.settings.shipping };
+      update({ homeCountry: t.value, shippingByHome: byHome, shipping: byHome[t.value || '_'] || defaultShipping(t.value) });
+      render();
+      return;
+    }
     if (k === 'list') { st.listUrl = t.value; st.wants = null; st.result = null; render(); return; }
     if (k === 'sellerTypes') { update({ sellerTypes: t.value ? t.value.split(',').map(Number) : [] }); return; }
     if (t.type === 'checkbox') { update({ [k]: t.checked }); if (k === 'anyPrinting' || k === 'samePrinting' || k.startsWith('deck')) render(); }

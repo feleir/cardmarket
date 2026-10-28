@@ -193,8 +193,9 @@ export function parseOffers(doc, pageUrl = '', seller = null) {
     const priceBox = row.querySelector('.price-container') || row;
     const priceEl = [...priceBox.querySelectorAll('.color-primary')].find((e) => /\d/.test(e.textContent));
     const listed = parsePrice(priceEl?.textContent);
-    // Professional sellers' prices to Switzerland exclude VAT, shown as a
-    // note ("You have to pay an additional 8.1% VAT"); count it in.
+    // For buyers outside the EU, professional sellers' prices can exclude the
+    // VAT Cardmarket adds, shown as a note ("You have to pay an additional
+    // 8.1% VAT"); count it in, whatever the rate.
     const vatNote = tipsIn(priceBox).map(tipOf).find((t) => /VAT/i.test(t)) || '';
     const vat = Number((vatNote.match(/(\d+(?:[.,]\d+)?)\s*%/) || [])[1]?.replace(',', '.')) || 0;
     const price = Math.round(listed * (1 + vat / 100) * 100) / 100;
