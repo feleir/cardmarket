@@ -160,7 +160,7 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   });
 
   await page.goto('https://www.cardmarket.com/en/Magic/Wants/123');
-  await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', v: 2, shipping: { CH: TEST_CH }, ...settings });
+  await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', v: 3, exact: false, shipping: { CH: TEST_CH }, ...settings });
   // Run exactly what a user pastes: decode the javascript: URL the way the browser does.
   await page.addScriptTag({ content: decodeURIComponent(bm.replace(/^javascript:/, '')) });
   const deck = settings.source === 'deck';

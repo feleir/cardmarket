@@ -96,7 +96,7 @@ export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' E
 export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
-  v: 2,                   // settings format, for migrating saved settings
+  v: 3,                   // settings format, for migrating saved settings
   source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist)
   deckText: '',
   deckSideboard: true,
@@ -123,7 +123,7 @@ export const DEFAULT_SETTINGS = {
   timeBudgetMs: 3000,
   scanMode: 'auto',       // 'auto' (only if a card page was cut off) | 'always' | 'off'
   scanSellers: 10,        // sellers whose whole wants-matching stock is read
-  exact: false,           // also run the exact solver (downloads ~3.5 MB once)
+  exact: true,            // also run the exact solver (downloads ~3.5 MB once)
   exactTimeMs: 15000,
   cacheMinutes: 30,
   shipping: {},           // the user's own tiers by seller country, over Cardmarket's published ones

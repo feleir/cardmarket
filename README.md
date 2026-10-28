@@ -111,7 +111,7 @@ The problem is NP-hard (a facility-location problem with stepped shipping costs)
   - **pull** to any seller, in the cart or not, the copies it can supply: first only those that cost little more there, then everything it stocks.
 - **Iterated search:** shake the best cart (drop 1–3 sellers, re-pick ~15% of copies, or pull to a random seller), search again, keep any improvement. Fresh random starts are mixed in.
 
-**Exact solver** (optional, *Setup → Optimizer → Exact solver*): the same problem as a mixed-integer program solved by [HiGHS](https://highs.dev) compiled to WebAssembly. It downloads about 3.5 MB from jsDelivr the first time, and the browser caches it after that. The heuristic then polishes its answer. If cardmarket.com's content-security policy blocks the download, the tool says so and uses the heuristic. It isn't used together with a seller cap.
+**Exact solver** (on by default, *Setup → Optimizer → Exact solver*): the same problem as a mixed-integer program solved by [HiGHS](https://highs.dev) compiled to WebAssembly, so the cart is proven the cheapest for the offers and shipping tiers. The bookmarklet and userscript download it (about 3.5 MB) from jsDelivr the first time, and the browser caches it after that; the Chrome extension ships it. The heuristic then polishes its answer. If the download is blocked, or the solver hits its time limit, the tool says so and uses the heuristic, which is within a fraction of a percent of the optimum on realistic carts.
 
 ### How close is the heuristic?
 

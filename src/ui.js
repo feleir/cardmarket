@@ -41,6 +41,8 @@ function loadSettings() {
         s.shippingByHome = Object.fromEntries(Object.entries(s.shippingByHome || {}).map(([k, v]) => [k, edits(v)]));
         s.v = 2;
       }
+      // Version 3 made the exact solver the default: on for everyone once.
+      if (s.v < 3) { s.exact = true; s.v = 3; }
       return { ...DEFAULT_SETTINGS, ...s };
     }
   } catch { /* fall through */ }
