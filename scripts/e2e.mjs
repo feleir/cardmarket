@@ -126,6 +126,12 @@ const highsDir = `${process.cwd()}/node_modules/highs/build/`;
 await mkdir('e2e-out', { recursive: true });
 const bm = await readFile('dist/bookmarklet.txt', 'utf8');
 
+// The Swiss tiers the hand-computed totals below use, set as the user's own
+// (they win over Cardmarket's published ones).
+const TEST_CH = [
+  { maxCards: 4, maxValue: 25, price: 1.83 }, { maxCards: 17, maxValue: 25, price: 2.6 }, { maxCards: 40, maxValue: 25, price: 3.6 },
+  { maxCards: 40, maxValue: 250, price: 8.5 }, { maxCards: 100000, maxValue: 100000, price: 11 },
+];
 const requestedCount = { ajax: 0 };
 let checkPages = false; // serve Cloudflare's "Just a moment..." for card pages
 async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
@@ -154,7 +160,7 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   });
 
   await page.goto('https://www.cardmarket.com/en/Magic/Wants/123');
-  await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', ...settings });
+  await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', v: 2, shipping: { CH: TEST_CH }, ...settings });
   // Run exactly what a user pastes: decode the javascript: URL the way the browser does.
   await page.addScriptTag({ content: decodeURIComponent(bm.replace(/^javascript:/, '')) });
   const deck = settings.source === 'deck';

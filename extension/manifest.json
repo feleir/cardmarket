@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Wants Optimizer for Cardmarket",
   "short_name": "Wants Optimizer",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cheapest cart for a Cardmarket wants list: card prices plus shipping across sellers. Not affiliated with Cardmarket.",
   "icons": {
     "16": "icons/16.png",

@@ -1,9 +1,10 @@
 // The overlay panel: settings, progress and results. Rendered into a shadow
 // root so Cardmarket's styles and ours cannot interfere. Built for a phone
 // screen first; on desktop it is a side panel.
-import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_SHIPPING, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS, defaultShipping } from './constants.js';
+import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS, BUILT_IN_TIERS } from './constants.js';
+import { SHIPPING_SCRAPED } from './shipping-data.js';
 import { parseWantsOverview } from './parse.js';
-import { formatTiers, parseTiers } from './shipping.js';
+import { formatTiers, parseTiers, publishedShipping, shippingFor, sameTiers } from './shipping.js';
 import { Fetcher, BlockedError, StoppedError } from './net.js';
 import { loadWantsList, collectOffers, toEnglish, pickSellersToScan, scanSellers, shouldScanSellers, findCard, deckWants, collectDeck } from './collect.js';
 import { parseDecklist } from './deck.js';
@@ -27,13 +28,20 @@ function loadSettings() {
       if (s.delayMs === 1200) s.delayMs = DEFAULT_SETTINGS.delayMs; // the old default, before Cardmarket's browser checks
       // Settings from before the home country setting: Swiss if they bought
       // from Switzerland (the tiers then were Swiss), otherwise not set.
-      if (s.homeCountry === undefined) {
-        s.homeCountry = (s.sellerCountries || []).includes(4) ? 'CH' : '';
-        if (s.homeCountry !== 'CH' && s.shipping?.CH && JSON.stringify(s.shipping.CH) === JSON.stringify(DEFAULT_SHIPPING.CH)) delete s.shipping.CH;
+      if (s.homeCountry === undefined) s.homeCountry = (s.sellerCountries || []).includes(4) ? 'CH' : '';
+      // Before version 2, saved shipping held every tier, built-in ones
+      // included; keep only the user's edits, so Cardmarket's published
+      // prices apply everywhere else.
+      const edits = (sh) => Object.fromEntries(Object.entries(sh || {}).filter(([, tiers]) => {
+        const prices = (tiers || []).map((t) => t.price).join();
+        return !BUILT_IN_TIERS.some((b) => sameTiers(b, tiers)) && !OLD_CH_TIERS.some((old) => old.join() === prices);
+      }));
+      if (!(s.v >= 2)) {
+        s.shipping = edits(s.shipping);
+        s.shippingByHome = Object.fromEntries(Object.entries(s.shippingByHome || {}).map(([k, v]) => [k, edits(v)]));
+        s.v = 2;
       }
-      const ch = s.shipping?.CH?.map((t) => t.price).join();
-      if (s.homeCountry === 'CH' && ch && OLD_CH_TIERS.some((old) => old.join() === ch)) s.shipping.CH = DEFAULT_SHIPPING.CH;
-      return { ...DEFAULT_SETTINGS, ...s, shipping: { ...defaultShipping(s.homeCountry), ...(s.shipping || {}) } };
+      return { ...DEFAULT_SETTINGS, ...s };
     }
   } catch { /* fall through */ }
   return structuredClone(DEFAULT_SETTINGS);
@@ -187,6 +195,8 @@ export function mount() {
     const countries = [...COUNTRIES].sort((a, b) => (sel.has(b.id) - sel.has(a.id)) || a.name.localeCompare(b.name))
       .filter((c) => !q || sel.has(c.id) || c.name.toLowerCase().includes(q));
     const home = COUNTRIES.find((c) => c.code === s.homeCountry);
+    const published = publishedShipping(s.homeCountry);
+    const eff = shippingFor(s.homeCountry, s.shipping);
     const shipCodes = ['default', ...new Set([...(home ? [home.code] : []), ...COUNTRIES.filter((c) => sel.has(c.id)).map((c) => c.code)])];
     return `
     <section><h2>What to buy</h2>
@@ -266,9 +276,13 @@ export function mount() {
       <details><summary>Shipping estimates</summary>
         <label><input type="checkbox" data-k="vatInParcelValue" ${s.vatInParcelValue ? 'checked' : ''}> Count added VAT toward the 25 € tracked-shipping limit</label>
         <p class="muted">For countries where Cardmarket adds VAT on top of some sellers' prices (their offers carry a VAT note). Off (as Cardmarket does it): a parcel's value is the sellers' prices before that VAT. Enter the tiers below before VAT; for those sellers, VAT is added to their shipping too, as on Cardmarket.</p>
-        <p class="muted">${home ? `To ${esc(home.name)}. ` : ''}One tier per line: <code>maxCards maxValue€ price€</code>. The cheapest tier that fits is used. The defaults are rough estimates${s.homeCountry === 'CH' ? ' (the Swiss letter price is real)' : ''}: check real prices on Cardmarket's Shipping Costs help page, or in your cart.</p>
-        ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}${code === s.homeCountry ? ' (within your country)' : ''}`}</label>
-          <textarea data-ship="${code}">${esc(formatTiers(s.shipping[code] || s.shipping.default))}</textarea>`).join('')}
+        <p class="muted">${published
+          ? `Cardmarket's published shipping costs to ${esc(home.name)} (help.cardmarket.com, ${esc(SHIPPING_SCRAPED)}). Card counts come from the letter weights (20 g: 4 cards, 50 g: 17, 100 g: 40). Edit a country's tiers to use your own; they then win over the published ones.`
+          : `${home ? `No published table for ${esc(home.name)}: rough estimates. ` : 'Pick your country to use Cardmarket\'s published prices. '}Check real prices on Cardmarket's Shipping Costs help page, or in your cart.`}</p>
+        <p class="muted">One tier per line: <code>maxCards maxValue€ price€ [tracked]</code>. The cheapest tier that fits is used.</p>
+        ${Object.keys(s.shipping || {}).length ? '<p><button class="btn sm sec" data-act="resetShipping">Use Cardmarket\'s prices again (drop my edits)</button></p>' : ''}
+        ${shipCodes.map((code) => `<label>${code === 'default' ? 'Any other country' : `From ${esc(COUNTRIES.find((c) => c.code === code).name)}${code === s.homeCountry ? ' (within your country)' : ''}`}${s.shipping?.[code] ? ' · your edit' : ''}</label>
+          <textarea data-ship="${code}">${esc(formatTiers(eff[code] || eff.default))}</textarea>`).join('')}
       </details>
       <details><summary>Advanced</summary>
         <div class="row">
@@ -728,7 +742,7 @@ export function mount() {
     return JSON.stringify({
       tool: 'cmopt-cart2', mix: s.samePrinting ? Number(s.mixPremium) || 0 : 0, at: new Date().toISOString().slice(0, 16),
       home: s.homeCountry,
-      shipping: { ...s.shipping, ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
+      shipping: { ...Object.fromEntries(Object.entries(shippingFor(s.homeCountry, s.shipping)).filter(([code]) => code === 'default' || sellers.some((x) => x[1] === code))), ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
       total: r?.total, exact: r?.exact || '',
       sellers, // [name, country, tracked only, VAT %]
       wants, // [name, quantity, [[seller#, price, available, bought?, printing#?]], printings?, choice?]
@@ -761,7 +775,7 @@ export function mount() {
 
   const optOptions = () => {
     const s = st.settings;
-    return { shipping: s.shipping, sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
+    return { shipping: shippingFor(s.homeCountry, s.shipping), sellerPenalty: s.sellerPenalty, maxSellers: s.maxSellers, timeBudgetMs: s.timeBudgetMs,
       printingPremium: s.anyPrinting ? s.printingPremium : 0, vatInParcelValue: !!s.vatInParcelValue,
       mixPenalty: s.samePrinting ? Number(s.mixPremium) || 0 : 0 };
   };
@@ -958,6 +972,7 @@ export function mount() {
       case 'stop': st.fetcher?.stop(); break;
       case 'addAll': await addItems(st.result.groups.flatMap((g) => g.items), t); break;
       case 'addForce': await addItems(st.cartWarn.items, t, { force: true }); break;
+      case 'resetShipping': update({ shipping: {} }); render(); break;
       case 'onlyHome': {
         const home = COUNTRIES.find((c) => c.code === st.settings.homeCountry);
         if (home) update({ sellerCountries: [home.id] });
@@ -1035,7 +1050,7 @@ export function mount() {
       case 'reset': {
         // Back to the defaults, but still living in the same country.
         const home = st.settings.homeCountry;
-        st.settings = { ...structuredClone(DEFAULT_SETTINGS), homeCountry: home, shipping: defaultShipping(home) };
+        st.settings = { ...structuredClone(DEFAULT_SETTINGS), homeCountry: home };
         saveSettings(st.settings); render(); break;
       }
       default:
@@ -1051,7 +1066,15 @@ export function mount() {
     }
     if (t.dataset.ship) {
       const tiers = parseTiers(t.value);
-      if (tiers.length) update({ shipping: { ...st.settings.shipping, [t.dataset.ship]: tiers } });
+      if (tiers.length) {
+        // Same as the published tiers: not an edit.
+        const code = t.dataset.ship;
+        const pub = (publishedShipping(st.settings.homeCountry) || {})[code];
+        const shipping = { ...st.settings.shipping };
+        if (pub && sameTiers(pub, tiers)) delete shipping[code]; else shipping[code] = tiers;
+        update({ shipping });
+        render();
+      }
       return;
     }
     const k = t.dataset.k;
@@ -1060,7 +1083,7 @@ export function mount() {
       // Each home country keeps its own tiers.
       const old = st.settings.homeCountry;
       const byHome = { ...(st.settings.shippingByHome || {}), [old || '_']: st.settings.shipping };
-      update({ homeCountry: t.value, shippingByHome: byHome, shipping: byHome[t.value || '_'] || defaultShipping(t.value) });
+      update({ homeCountry: t.value, shippingByHome: byHome, shipping: byHome[t.value || '_'] || {} });
       render();
       return;
     }

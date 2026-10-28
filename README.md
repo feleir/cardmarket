@@ -47,7 +47,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
 ## How to use
 
 1. **Setup:**
-   - **You live in**: your country. Shipping costs depend on where parcels go, so the shipping estimates are kept per home country (switching keeps each country's tiers). Default tiers are rough estimates except the Swiss letter price; edit them under **Shipping estimates**. **Only <your country>** picks just your country as the seller allow list.
+   - **You live in**: your country. Shipping uses **Cardmarket's published shipping costs** from every seller country to yours (scraped from [help.cardmarket.com/en/ShippingCosts](https://help.cardmarket.com/en/ShippingCosts), all 34 × 34 country pairs). **Only <your country>** picks just your country as the seller allow list.
    - **What to buy**: a Cardmarket wants list, or **a decklist** pasted from Moxfield, Archidekt, MTGGoldfish, MTGTop8, Arena or MTGO (`4 Lightning Bolt`, `4x Lightning Bolt (M10) 146`, `SB: 2 Duress`, section headings). Set codes and foil markers are ignored: a decklist always means any printing of each card. Options: include the sideboard, skip basic lands. Cards the site doesn't know by that name are looked up with Cardmarket's search, and the ones still not found are listed. The seller scan needs a wants list, so it doesn't run for a decklist; if card pages are cut off, import the deck into a Cardmarket wants list (Wants → Add decklist) and use that instead.
    - Tap the seller countries you allow.
    - Optionally override language, minimum condition and foil. Otherwise each want's own settings are used.
@@ -57,7 +57,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - Set the minimum seller rating, seller type and sellers to block.
    - **Max sellers**, **Extra cost per seller**: trade money for fewer parcels.
    - **Printings**: for "any printing" wants, how many printings to check (cheapest first), and expansions to never buy from. Defaults include World Championship Decks and Collectors' Edition, which aren't tournament-legal.
-   - **Shipping estimates**: one line per tier, `maxCards maxValue price`, for each seller country.
+   - **Shipping estimates**: the tiers in use per seller country, one per line: `maxCards maxValue price [tracked]`. Card counts come from the letter weights (20 g: 4 cards, 50 g: 17, 100 g: 40; heavier ones at about 2.2 g a card). Editing a country's tiers makes them yours, kept per home country, and they win over the published ones; **Use Cardmarket's prices again** drops your edits. `npm run shipping` re-scrapes the table (`data/shipping-raw.json` → `src/shipping-data.js`).
 2. **Fetch offers & optimize.** It loads about one page per want, more for "any printing" wants.
 3. **Results:**
    - The total, split into cards and estimated shipping.

@@ -78,9 +78,12 @@ const DOMESTIC = {
     { maxCards: 100000, maxValue: 100000, price: 11 },
   ],
 };
+// Without a published table for the buyer's country.
 export const defaultShipping = (home) => ({ default: GENERIC_TIERS, ...(DOMESTIC[home] ? { [home]: DOMESTIC[home] } : {}) });
-// Before the home country setting: the Swiss defaults.
+// Before the home country setting: the Swiss defaults (kept for tests and
+// to tell built-in tiers from the user's edits in old settings).
 export const DEFAULT_SHIPPING = defaultShipping('CH');
+export const BUILT_IN_TIERS = [GENERIC_TIERS, DOMESTIC.CH];
 
 // Printings that are not tournament-legal. Cardmarket names the World
 // Championship decks "WCD <year>: <player>" (and the 1996 set "Pro Tour
@@ -93,6 +96,7 @@ export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' E
 export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
+  v: 2,                   // settings format, for migrating saved settings
   source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist)
   deckText: '',
   deckSideboard: true,
@@ -122,6 +126,6 @@ export const DEFAULT_SETTINGS = {
   exact: false,           // also run the exact solver (downloads ~3.5 MB once)
   exactTimeMs: 15000,
   cacheMinutes: 30,
-  shipping: defaultShipping(''),
-  shippingByHome: {},     // other home countries' tiers, kept when switching
+  shipping: {},           // the user's own tiers by seller country, over Cardmarket's published ones
+  shippingByHome: {},     // those edits for other home countries, kept when switching
 };
