@@ -150,6 +150,81 @@ const expansionFromUrl = (href) => {
 // A product page (one printing), card page (all printings) or a seller's
 // offers page -> offers. pageUrl names the printing when rows do not carry
 // it; seller fills in the seller on a seller's own page, whose rows have none.
+// The shopping cart page -> { items: [{ articleId, name, productUrl, expansion,
+// seller, countryCode, quantity, price, listedPrice, vat, language, condition,
+// isFoil }], sellers: { name: { countryCode } } }. The cart markup has not been
+// seen live, so it is read loosely: an item is the smallest block around a
+// product link that holds a price, and its seller is the nearest seller link
+// above it outside any item.
+// A price: an amount with two decimals, with or without the € sign.
+const PRICE_RE = /\d[\d.,]*[.,]\d{2}(?!\d)/;
+export function parseCart(doc, { withRows = false } = {}) {
+  const links = [...doc.querySelectorAll('a[href*="/Products/"]')].filter((a) => flat(a.textContent));
+  const rows = [];
+  for (const a of links) {
+    let row = a.closest('.article-row, [id^="articleRow"], [data-article-id], [data-id-article], tr');
+    if (!row || !PRICE_RE.test(row.textContent)) {
+      row = a.parentElement;
+      while (row && row !== doc.body && !PRICE_RE.test(row.textContent)) row = row.parentElement;
+    }
+    if (row && row !== doc.body && !rows.includes(row) && !rows.some((r) => r.contains(row))) {
+      for (let i = rows.length - 1; i >= 0; i--) if (row.contains(rows[i])) rows.splice(i, 1);
+      rows.push(row);
+    }
+  }
+  const sellers = {};
+  const items = [];
+  for (const row of rows) {
+    const link = row.querySelector('a[href*="/Products/"]');
+    const href = (link.getAttribute('href') || '').replace(/[?#].*$/, '');
+    // Article id: the row's own id, a data attribute, or an idArticle field.
+    const attrId = (el) => ((el.id || '').match(/(\d{5,})/) || [])[1] || el.getAttribute('data-article-id') || el.getAttribute('data-id-article');
+    let articleId = attrId(row) || [...row.querySelectorAll('[id], [data-article-id], [data-id-article]')].map(attrId).find(Boolean) || '';
+    if (!articleId) {
+      const field = row.querySelector('input[name^="idArticle"], input[name*="article" i]');
+      articleId = (field?.getAttribute('name')?.match(/\[(\d+)\]/) || [])[1] || field?.getAttribute('value') || '';
+    }
+    // Quantity: an amount field, else "2x" / "2 x" text.
+    const amountEl = row.querySelector('select[name*="mount"], input[name*="mount"]:not([type="hidden"]), .amount, .item-count, [data-amount]');
+    let quantity = parseInt(amountEl?.getAttribute('data-amount') || amountEl?.value || flat(amountEl?.textContent), 10);
+    if (!(quantity > 0)) quantity = parseInt((flat(row.textContent).match(/(?:^|\s)(\d+)\s*x\s/i) || [])[1], 10) || 1;
+    // Price: the first price shown; if one is the line total (quantity x
+    // another), take the unit price.
+    const priceEls = [...row.querySelectorAll('.color-primary, .price, [class*="price"]')].filter((e) => PRICE_RE.test(e.textContent) && !e.querySelector('.color-primary, .price'));
+    const prices = (priceEls.length ? priceEls.map((e) => parsePrice(e.textContent)) : (flat(row.textContent).match(new RegExp(PRICE_RE.source, 'g')) || []).map(parsePrice)).filter((x) => x > 0);
+    let listed = prices[0] || 0;
+    if (quantity > 1 && prices.length > 1) {
+      const unit = prices.find((p) => prices.some((q) => Math.abs(q - p * quantity) < 0.011));
+      if (unit) listed = unit;
+    }
+    const vatNote = tipsIn(row).map(tipOf).find((t) => /VAT/i.test(t)) || '';
+    const vat = Number((vatNote.match(/(\d+(?:[.,]\d+)?)\s*%/) || [])[1]?.replace(',', '.')) || 0;
+    const tips = tipsIn(row).map(tipOf);
+    const language = tips.map(languageByName).find(Boolean)?.id || 0;
+    const condition = conditionByCode(flat(row.querySelector('.article-condition .badge, .article-condition, .badge')?.textContent))?.id || 0;
+    const isFoil = tips.some((t) => /^(reverse holo|foil|holo)/i.test(t));
+    const expansion = flat(tipOf(row.querySelector('.expansion-symbol'))) || expansionFromUrl(href);
+    // Seller: the nearest seller link above the row, outside every row.
+    let seller = '';
+    let countryCode = '';
+    for (let up = row.parentElement; up && !seller; up = up.parentElement) {
+      const sl = [...up.querySelectorAll('a[href*="/Users/"]')].find((x) => !rows.some((r) => r.contains(x)));
+      if (!sl) continue;
+      seller = flat(sl.textContent) || (sl.getAttribute('href').match(/\/Users\/([^/?#]+)/) || [])[1] || '';
+      const head = sl.closest('header, .card-header, h1, h2, h3, h4, h5, div') || up;
+      const loc = tipsIn(head).map(tipOf).map((t) => countryByName(t.replace(/^.*?:\s*/, ''))).find(Boolean);
+      countryCode = loc?.code || '';
+    }
+    if (!seller) seller = ((row.querySelector('a[href*="/Users/"]')?.getAttribute('href') || '').match(/\/Users\/([^/?#]+)/) || [])[1] || '';
+    if (seller && !sellers[seller]) sellers[seller] = { countryCode };
+    const price = Math.round(listed * (1 + vat / 100) * 100) / 100;
+    if (!(price > 0)) continue;
+    items.push({ articleId, name: flat(link.textContent), productUrl: href, expansion, seller, countryCode, quantity,
+      price, listedPrice: listed, vat, language, condition, isFoil, ...(withRows ? { row } : {}) });
+  }
+  return { items, sellers };
+}
+
 export function parseOffers(doc, pageUrl = '', seller = null) {
   const offers = [];
   const pageExpansion = flat(tipOf(doc.querySelector('.product-attributes .expansion-symbol, a[href*="/Expansions/"].expansion-symbol')))

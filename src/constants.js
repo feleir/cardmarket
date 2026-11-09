@@ -97,7 +97,8 @@ export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
   v: 3,                   // settings format, for migrating saved settings
-  source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist)
+  source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist) | 'cart' (the Cardmarket cart)
+  cartLikeForLike: true,  // cart: same language, condition at least as good as what is in it
   deckText: '',
   deckSideboard: true,
   deckSkipBasics: true,

@@ -11,8 +11,8 @@ import { parseDecklist } from './deck.js';
 import { planExtra } from './extra.js';
 import { loadHighs, solveWith } from './exact.js';
 import { planOptions } from './options.js';
-import { optimize, printingOf } from './optimizer.js';
-import { addAll, cartLog, siteCartCode, leftovers } from './cart.js';
+import { optimize, printingOf, cartCost } from './optimizer.js';
+import { addAll, cartLog, siteCartCode, leftovers, readCart, removeFromCart, CheckPageError } from './cart.js';
 
 const KEY = 'cmopt:settings';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -182,6 +182,12 @@ export function mount() {
   }
 
   // Decklist mode: paste a list exported from a deck site.
+  function viewCartSource(s) {
+    return `<p class="muted">Reads what is in your Cardmarket cart now, looks for the same cards from every seller, and shows what the cheapest way to buy them would be: moves between sellers, parcels that can go, what you would save. <b>Your cart is not changed</b> until you tap "Apply changes to cart" on the results.</p>
+      <label><input type="checkbox" data-k="cartLikeForLike" ${s.cartLikeForLike ? 'checked' : ''}> Like for like: the same languages, and a condition at least as good as the copies in the cart</label>
+      <p class="muted">Off: your filters below decide (languages, condition, any printing).</p>`;
+  }
+
   function viewDeck(s) {
     const entries = parseDecklist(s.deckText, { includeSideboard: s.deckSideboard, skipBasics: s.deckSkipBasics });
     return `<textarea id="cmopt-deck" data-k="deckText" style="min-height:160px" placeholder="Paste a decklist, e.g.&#10;4 Lightning Bolt&#10;4 Goblin Guide (ZEN)&#10;&#10;Sideboard&#10;2 Duress">${esc(s.deckText)}</textarea>
@@ -205,8 +211,9 @@ export function mount() {
       <div class="chips" style="margin-bottom:10px">
         <button class="chip ${s.source !== 'deck' ? 'on' : ''}" data-source="wants">A wants list</button>
         <button class="chip ${s.source === 'deck' ? 'on' : ''}" data-source="deck">A decklist</button>
+        <button class="chip ${s.source === 'cart' ? 'on' : ''}" data-source="cart">My cart</button>
       </div>
-      ${s.source === 'deck' ? viewDeck(s) : viewWantsPicker()}
+      ${s.source === 'deck' ? viewDeck(s) : s.source === 'cart' ? viewCartSource(s) : viewWantsPicker()}
     </section>
     <section><h2>You live in</h2>
       <select data-k="homeCountry">
@@ -338,6 +345,7 @@ export function mount() {
 
   function cartButton(it, gi, ii) {
     const state = st.cartState.get(it.offer.id);
+    if (st.cartPicks && !state) return (st.cartPicks.flat().some((p) => p.id === it.offer.id)) ? '<span class="muted">in your cart</span>' : '<span class="ok">new</span>';
     if (state === 'added') return '<span class="ok">In cart ✓</span>';
     if (state === 'unconfirmed') return `<a class="warn" href="/en/${esc(game())}/ShoppingCart" target="_blank" rel="noopener">Sent · check cart</a>`;
     if (state === 'failed') return `<a class="warn" href="${esc(it.offer.productUrl)}" target="_blank" rel="noopener">Not added · open</a>`;
@@ -566,6 +574,7 @@ export function mount() {
     const saved = r.baseline.total - r.total;
     const missing = r.missing.reduce((n, m) => n + m.count, 0);
     return `
+    ${viewCartCompare()}
     ${viewCartWarn()}
     ${viewDuplicates()}
     ${st.cartMsg ? `<div class="card"><p class="${st.cartMsg.ok ? 'ok' : 'warn'}">${esc(st.cartMsg.text)}</p>
@@ -605,7 +614,7 @@ export function mount() {
             ${switchNote(it)}${oneSellerNote(it)}</div>
           <div class="p">${money(it.offer.price)}<br>${cartButton(it, gi, ii)}</div>
         </div>`).join('')}
-        <p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>
+        ${st.cartPicks ? '' : `<p><button class="btn sm" data-addseller="${gi}">Add all from ${esc(g.seller)}</button></p>`}
       </div>`).join('')}
     ${st.cartMsg && !st.cartMsg.ok ? '<p><button class="btn sec sm" data-act="debug">Copy debug report</button></p><textarea id="cmopt-debug" readonly hidden></textarea>' : ''}
     ${r.missing.length ? `<div class="card"><b>Not found</b>${r.missing.map((m) => `<div class="item"><div class="t">${m.count}× <a href="${esc(m.want.url)}" target="_blank" rel="noopener">${esc(m.want.name)}</a></div></div>`).join('')}</div>` : ''}
@@ -619,7 +628,9 @@ export function mount() {
     const bar = $('.bar');
     if (st.running) bar.innerHTML = '<button class="btn sec" data-act="stop">Stop</button>';
     else if (st.tab === 'results' && st.result) {
-      bar.innerHTML = `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="addAll">Add all to cart</button>`;
+      bar.innerHTML = st.cartPicks
+        ? `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="applyCart" ${st.cartApplied || !cartChanges().length ? 'disabled' : ''}>Apply changes to cart</button>`
+        : `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="addAll">Add all to cart</button>`;
     } else {
       bar.innerHTML = '<button class="btn" data-act="run">Fetch offers & optimize</button>';
     }
@@ -628,10 +639,12 @@ export function mount() {
   // ---------- actions ----------
   async function run() {
     const deckMode = st.settings.source === 'deck';
+    const cartMode = st.settings.source === 'cart';
     const deck = deckMode ? parseDecklist(st.settings.deckText, { includeSideboard: st.settings.deckSideboard, skipBasics: st.settings.deckSkipBasics }) : [];
     if (deckMode && !deck.length) { st.log = ['Paste a decklist first (Setup → What to buy).']; st.tab = 'run'; render(); return; }
-    if (!deckMode && !st.listUrl) { st.log = ['Pick a wants list first.']; st.tab = 'run'; render(); return; }
+    if (!deckMode && !cartMode && !st.listUrl) { st.log = ['Pick a wants list first.']; st.tab = 'run'; render(); return; }
     st.running = true; st.tab = 'run'; st.log = []; st.progress = 0;
+    st.cartNow = null; st.cartMsg = null; st.cartState = new Map(); st.cartPicks = null;
     if (!st.settings.homeCountry) st.log.push('Tip: pick your country under Setup → "You live in", so the shipping estimates fit where the parcels go.');
     render();
     const s = st.settings;
@@ -648,7 +661,19 @@ export function mount() {
         setProgress(i / n, w ? `${i + 1}/${n} · ${w.name}` : 'Optimizing…');
         if (i > 0) log(describeWant(wants[i - 1]));
       };
-      if (deckMode) {
+      if (cartMode) {
+        log('Reading your Cardmarket cart…');
+        setProgress(0.02, 'Reading your cart…');
+        const cart = await readCart();
+        st.cartDiag = cart.diag;
+        if (!cart.items.length) throw new Error('No items could be read from your cart. If it is not empty, tap "Copy debug report" below and send it: the cart page layout is new to the tool.');
+        wants = cartWants(cart.items, s);
+        log(`Your cart: ${cart.items.reduce((n, i) => n + i.quantity, 0)} copies of ${wants.length} card(s) from ${Object.keys(cart.sellers).length || new Set(cart.items.map((i) => i.seller)).size} seller(s).`);
+        if (cart.diag.withoutId || cart.diag.withoutSeller) log(`⚠ ${cart.diag.withoutId} item(s) without an article number, ${cart.diag.withoutSeller} without a seller: those cannot be changed automatically.`);
+        st.wants = wants;
+        await collectOffers(fetcher, wants, s, progress);
+        st.cartPicks = cartOffers(wants);
+      } else if (deckMode) {
         wants = deckWants(deck, game());
         log(`Decklist: ${wants.length} different cards, ${wants.reduce((n, w) => n + w.quantity, 0)} in total.`);
         st.wants = wants;
@@ -665,8 +690,8 @@ export function mount() {
       const opts = optOptions();
       // The seller scan filters sellers' stock by a Cardmarket wants list,
       // which a pasted deck does not have.
-      const scan = deckMode ? { run: false, reason: 'deck' } : shouldScanSellers(wants, s.scanMode || 'auto');
-      if (scan.reason === 'deck' && wants.some((w) => w.truncated)) log('Some card pages held back offers. The seller scan needs a Cardmarket wants list: import the deck into one (Wants → Add decklist) to use it.');
+      const scan = deckMode || cartMode ? { run: false, reason: 'deck' } : shouldScanSellers(wants, s.scanMode || 'auto');
+      if (scan.reason === 'deck' && wants.some((w) => w.truncated)) log(`Some card pages held back offers. The seller scan needs a Cardmarket wants list${deckMode ? ': import the deck into one (Wants → Add decklist) to use it' : ''}.`);
       if (scan.reason === 'complete') log('Every card page showed all its offers: seller scan not needed.');
       if (scan.reason === 'truncated') log(`${scan.cut} card page(s) held back offers: scanning sellers for hidden copies.`);
       if (scan.run && s.scanSellers > 0) {
@@ -686,11 +711,184 @@ export function mount() {
     } catch (e) {
       if (e instanceof StoppedError) log('Stopped. Pages fetched so far are cached; run again to continue.');
       else if (e instanceof BlockedError) log('⚠ ' + e.message);
+      else if (e instanceof CheckPageError) log('⚠ Cardmarket is showing its browser check ("Just a moment…"). Open your cart in this tab, wait until the check passes, then run cmopt again.');
       else { log('Error: ' + e.message); console.error(e); }
       st.running = false;
       render();
     }
   }
+
+  // ---------- optimizing the cart ----------
+
+  // One want per printing in the cart (its copies added up), with the
+  // cart's languages and worst condition when "like for like" is on.
+  function cartWants(items, s) {
+    const by = new Map();
+    for (const it of items) {
+      const key = it.productUrl || it.name;
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push(it);
+    }
+    return [...by.values()].map((list, i) => {
+      const first = list[0];
+      const like = !!s.cartLikeForLike;
+      return {
+        idWant: `cart:${i}`, name: first.name, url: toEnglish(first.productUrl), kind: /\/Cards\//.test(first.productUrl) ? 'card' : 'product',
+        quantity: list.reduce((n, x) => n + x.quantity, 0),
+        languages: like ? [...new Set(list.map((x) => x.language).filter(Boolean))] : [],
+        minCondition: like ? Math.max(0, ...list.map((x) => x.condition || 0)) : 0,
+        flags: like ? { isFoil: list.every((x) => x.isFoil) ? 'Y' : 'N' } : {},
+        maxPrice: 0, expansion: first.expansion || '', cartItems: list,
+      };
+    });
+  }
+
+  // The cart's own articles as offers of their wants (added when the card
+  // pages did not list them), and what the cart holds: picks[want] = [{ id, count }].
+  function cartOffers(wants) {
+    const all = wants.flatMap((w) => w.offers || []);
+    return wants.map((w) => {
+      w.offers ||= [];
+      return w.cartItems.map((it, k) => {
+        let o = it.articleId && w.offers.find((x) => x.id === it.articleId);
+        if (o) o.available = Math.max(o.available || 1, it.quantity);
+        else {
+          const same = all.find((x) => x.seller === it.seller);
+          const code = it.countryCode || same?.countryCode || st.settings.homeCountry;
+          o = { id: it.articleId || `cart:${w.idWant}:${k}`, seller: it.seller, sellerUrl: same?.sellerUrl || `/en/${game()}/Users/${it.seller}`,
+            countryCode: code, countryName: COUNTRIES.find((c) => c.code === code)?.name || '', countryId: COUNTRIES.find((c) => c.code === code)?.id || 0,
+            rating: same?.rating ?? 0, trackedOnly: !!same?.trackedOnly, price: it.price, listedPrice: it.listedPrice, vat: it.vat,
+            available: it.quantity, language: it.language, condition: it.condition, isFoil: it.isFoil,
+            expansion: it.expansion, productUrl: it.productUrl, name: it.name };
+          w.offers.push(o);
+        }
+        return { id: o.id, count: it.quantity };
+      });
+    });
+  }
+
+  // What changes between the cart and the plan shown, by article.
+  function cartDiff() {
+    const inCart = new Map();
+    (st.wants || []).forEach((w, wi) => (st.cartPicks?.[wi] || []).forEach((p) => {
+      const e = inCart.get(p.id) || { count: 0, want: w };
+      e.count += p.count;
+      inCart.set(p.id, e);
+    }));
+    const planned = new Map();
+    for (const g of st.result.groups) for (const it of g.items) {
+      const e = planned.get(it.offer.id) || { count: 0, it };
+      e.count += it.quantity;
+      planned.set(it.offer.id, e);
+    }
+    const toAdd = [];
+    const raise = [];
+    for (const [id, { count, it }] of planned) {
+      const have = inCart.get(id)?.count || 0;
+      if (count > have) (have ? raise : toAdd).push({ offer: it.offer, want: it.want, quantity: count - have, keep: count });
+    }
+    const toRemove = [];
+    for (const [id, { count, want }] of inCart) {
+      const keep = planned.get(id)?.count || 0;
+      if (count > keep) toRemove.push({ articleId: id, quantity: count - keep, keep, want, offer: want.offers.find((o) => o.id === id) });
+    }
+    return { toAdd, raise, toRemove };
+  }
+
+  // Per card, where its copies come from now and in the plan, for the cards that change.
+  function cartChanges() {
+    const fmt = (m) => [...m].map(([s, n]) => `${esc(s)} ${n}`).join(', ') || '—';
+    const out = [];
+    for (const w of st.wants || []) {
+      if (!w.cartItems) continue;
+      const now = new Map();
+      for (const it of w.cartItems) now.set(it.seller, (now.get(it.seller) || 0) + it.quantity);
+      const plan = new Map();
+      for (const g of st.result.groups) for (const it of g.items) if (it.want.idWant === w.idWant) plan.set(g.seller, (plan.get(g.seller) || 0) + it.quantity);
+      if (fmt(now) !== fmt(plan)) out.push(`<div class="item"><div class="t">${w.quantity}× ${esc(w.name)}<div class="muted">${fmt(now)} → <b>${fmt(plan)}</b></div></div></div>`);
+    }
+    return out;
+  }
+
+  function viewCartCompare() {
+    const now = st.cartNow;
+    if (!now || !st.result) return '';
+    const r = st.result;
+    const d = Math.round((now.total - r.total) * 100) / 100;
+    const changes = cartChanges();
+    return `<div class="card">
+      <div class="sum">
+        <span>Your cart now (estimated)</span><b>${money(now.total)}</b>
+        <span>Parcels now</span><b>${now.sellers}</b>
+        <span>This plan</span><b class="big">${money(r.total)}</b>
+      </div>
+      ${d > 0.005 ? `<p class="ok">Saves about ${money(d)} on your cart (${now.sellers} → ${r.groups.length} parcels). Nothing has changed in your cart yet.</p>`
+        : d < -0.005 ? `<p class="warn">This plan costs ${money(-d)} more than your cart now.</p>`
+          : '<p class="ok">Your cart is already as cheap as these offers allow.</p>'}
+      ${changes.length ? `<b>Changes</b>${changes.join('')}` : ''}
+      ${st.cartApplied ? '<p class="muted">Applied. Run "My cart" again to check the new cart.</p>' : changes.length ? '<p class="muted">Tap "Apply changes to cart" to make them: new copies are added first, and the old ones are removed only for cards whose new copies all went in.</p>' : ''}
+      <p class="muted">Both totals are estimated the same way, from the shipping tiers in Setup; the cart page shows Cardmarket's real shipping.</p>
+    </div>`;
+  }
+
+  async function applyCart(btn) {
+    if (st.adding) return;
+    st.adding = true;
+    if (btn) btn.disabled = true;
+    const label = (t) => { if (btn && btn.isConnected) btn.textContent = t; };
+    const { toAdd, raise, toRemove } = cartDiff();
+    // What the plan wants per article, to check the cart against.
+    const target = new Map();
+    for (const g of st.result.groups) for (const it of g.items) target.set(it.offer.id, (target.get(it.offer.id) || 0) + it.quantity);
+    const short = (cart) => {
+      const have = new Map((cart?.items || []).map((i) => [i.articleId, i.quantity]));
+      return new Set([...toAdd, ...raise].filter((x) => (have.get(x.offer.id) || 0) < target.get(x.offer.id)).map((x) => x.want.idWant));
+    };
+    const lines = [];
+    try {
+      const onEach = (it, state) => { if (state !== 'sent' && state !== 'unknown') st.cartState.set(it.offer.id, state); };
+      if (toAdd.length) {
+        label(`Adding ${toAdd.length}…`);
+        const r = await addAll(toAdd, onEach, { pauseMs: st.settings.delayMs });
+        if (r.check) throw new CheckPageError('check');
+      }
+      if (raise.length) {
+        label(`Adding ${raise.length} more…`);
+        const r = await addAll(raise, null, { pauseMs: st.settings.delayMs, allowExisting: true });
+        if (r.check) throw new CheckPageError('check');
+      }
+      // Old copies go only for cards whose new copies are all in the cart.
+      const mid = toAdd.length || raise.length ? await readCart() : null;
+      const missing = mid ? short(mid) : new Set();
+      if (toAdd.length || raise.length) lines.push(missing.size ? `New copies for ${missing.size} card(s) did not all go in, so their old copies stay.` : 'New copies added.');
+      const removable = toRemove.filter((x) => !missing.has(x.want.idWant) && !String(x.articleId).startsWith('cart:'));
+      if (removable.length) {
+        label(`Removing ${removable.length}…`);
+        const r = await removeFromCart(removable);
+        lines.push(`Removed ${r.removed.length} of ${removable.length}.`);
+      }
+      // The cart against the plan, article by article.
+      const end = await readCart();
+      const have = new Map(end.items.map((i) => [i.articleId, i.quantity]));
+      const todo = [];
+      for (const [id, n] of target) if ((have.get(id) || 0) !== n) {
+        const it = st.result.groups.flatMap((g) => g.items).find((x) => x.offer.id === id);
+        todo.push(`${esc(it.want.name)} from ${esc(it.offer.seller)}: ${have.get(id) || 0} in the cart, plan ${n}`);
+      }
+      for (const x of toRemove) if (!target.has(x.articleId) && have.has(x.articleId)) todo.push(`remove ${have.get(x.articleId)}× ${esc(x.want.name)} from ${esc(x.offer?.seller || '?')}`);
+      st.cartApplied = true;
+      st.cartMsg = todo.length
+        ? { ok: false, text: `${lines.join(' ')} Still different from the plan (change by hand in the cart): ${todo.join('; ')}.` }
+        : { ok: true, text: `${lines.join(' ')} Your cart now matches this plan.` };
+    } catch (e) {
+      st.cartMsg = e instanceof CheckPageError
+        ? { ok: false, text: `Cardmarket is showing its browser check, so changing the cart stopped. ${lines.join(' ')} Open your cart in this tab, pass the check, then run "My cart" again.` }
+        : { ok: false, text: `Changing the cart failed: ${e.message || e}. ${lines.join(' ')} Run "My cart" again to see where it stands.` };
+    }
+    st.adding = false;
+    render();
+  }
+
 
   // One log line per card; for a card left with no offers, say whether the
   // page had none or they were filtered out, and by what.
@@ -774,6 +972,7 @@ export function mount() {
       cart: cartLog.slice(-14),
       siteCart: st.cartMsg && !st.cartMsg.ok ? siteCartCode() : undefined,
       sellerScan: st.scanDiag,
+      cartRead: st.cartDiag,
     }, null, 1);
   }
 
@@ -841,6 +1040,11 @@ export function mount() {
 
   async function reoptimize() {
     st.result = await solve(solveWants(), optOptions());
+    if (st.cartPicks) {
+      const o = optOptions();
+      st.cartNow = cartCost(st.wants, st.cartPicks, o.shipping, o.vatInParcelValue);
+      st.cartApplied = false;
+    }
     st.running = false;
     st.tab = 'results';
     render();
@@ -936,7 +1140,7 @@ export function mount() {
     if (t.dataset.tab) { st.tab = t.dataset.tab; render(); return; }
     if (t.dataset.source) {
       update({ source: t.dataset.source });
-      st.wants = null; st.result = null;
+      st.wants = null; st.result = null; st.cartPicks = null; st.cartNow = null;
       render();
       return;
     }
@@ -975,6 +1179,7 @@ export function mount() {
       case 'run': run(); break;
       case 'stop': st.fetcher?.stop(); break;
       case 'addAll': await addItems(st.result.groups.flatMap((g) => g.items), t); break;
+      case 'applyCart': await applyCart(t); break;
       case 'addForce': await addItems(st.cartWarn.items, t, { force: true }); break;
       case 'resetShipping': update({ shipping: {} }); render(); break;
       case 'onlyHome': {

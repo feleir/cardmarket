@@ -15,7 +15,7 @@
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
-import { offerRow, productPage, wantsListPage, cardPage, wantsOverview, userOfferRow, userOffersPage } from '../test/fixtures.js';
+import { offerRow, productPage, wantsListPage, cardPage, wantsOverview, userOfferRow, userOffersPage, cartPage } from '../test/fixtures.js';
 
 const require = createRequire(import.meta.url);
 let pw;
@@ -81,6 +81,17 @@ function sellerPage(seller, q) {
 // script sends the add-to-cart request when its button is pressed (here to
 // a mock AJAX endpoint); posting the form anywhere else does nothing.
 const cart = new Map();
+// richCart: serve a full cart page (the "My cart" run reads and changes it).
+let richCart = false;
+const ARTICLES = {
+  10: { seller: 'zurich_cards', name: 'Lightning Bolt', productUrl: '/en/Magic/Products/Singles/Magic-2010/Lightning-Bolt', expansion: 'Magic 2010', price: '0,60 €' },
+  12: { seller: 'geneva_tcg', name: 'Lightning Bolt', productUrl: '/en/Magic/Products/Singles/Magic-2010/Lightning-Bolt', expansion: 'Magic 2010', price: '0,80 €' },
+  20: { seller: 'basel_magic', name: 'Sheoldred, the Apocalypse', productUrl: '/en/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse', expansion: 'Dominaria United', price: '60,00 €' },
+  21: { seller: 'geneva_tcg', name: 'Sheoldred, the Apocalypse', productUrl: '/en/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse', expansion: 'Dominaria United', price: '61,00 €' },
+  30: { seller: 'basel_magic', name: 'Counterspell', productUrl: '/en/Magic/Products/Singles/Ice-Age/Counterspell', expansion: 'Ice Age', price: '1,20 €' },
+  31: { seller: 'geneva_tcg', name: 'Counterspell', productUrl: '/en/Magic/Products/Singles/Ice-Age/Counterspell', expansion: 'Ice Age', price: '1,30 €' },
+  32: { seller: 'lugano', name: 'Counterspell', productUrl: '/en/Magic/Products/Singles/Ice-Age/Counterspell', expansion: 'Ice Age', price: '0,90 €', cond: 'PL' },
+};
 // Like Cardmarket, adding an article already in the cart adds to its amount.
 // cartLagMs: the cart page shows an article only this long after it was added.
 let cartLagMs = 0;
@@ -94,7 +105,7 @@ const pageScript = `<script>
   function send(body) {
     window.doingJCPCall = true;
     const x = new XMLHttpRequest();
-    x.open('POST', '/en/Magic/AjaxAction/ShoppingCart_Add');
+    x.open('POST', '/en/Magic/AjaxAction/' + body.get('__action'));
     x.onloadend = () => { window.doingJCPCall = false; const next = window.jcpStack.shift(); if (next) send(next); };
     x.send(body);
   }
@@ -103,6 +114,7 @@ const pageScript = `<script>
     if (!f) return;
     e.preventDefault();
     const body = new FormData(f);
+    body.set('__action', f.getAttribute('data-ajax-action'));
     if (window.doingJCPCall) window.jcpStack.push(body); else send(body);
   });
 </script>`;
@@ -116,7 +128,22 @@ function cartRoute(u, req) {
     }
     return '{"ok":true}';
   }
+  if (req.method() === 'POST' && u.pathname.startsWith('/en/Magic/AjaxAction/ShoppingCart_RemoveArticle')) {
+    const f = fieldsOf(req.postData() || '');
+    const left = (cart.get(f.idArticle) || 0) - Number(f.amount || 1);
+    if (left > 0) cart.set(f.idArticle, left); else cart.delete(f.idArticle);
+    return '{"ok":true}';
+  }
   if (req.method() === 'POST') return '<html><body>home</body></html>'; // what PostGetAction did live
+  if (u.pathname === '/en/Magic/ShoppingCart' && richCart) {
+    const bySeller = new Map();
+    for (const [id, n] of cart) {
+      const a = ARTICLES[id];
+      if (!bySeller.has(a.seller)) bySeller.set(a.seller, []);
+      bySeller.get(a.seller).push({ id, amount: n, ...a });
+    }
+    return cartPage([...bySeller].map(([seller, items]) => ({ seller, items })));
+  }
   if (u.pathname === '/en/Magic/ShoppingCart') return `<html><body>${[...cart].filter(([id]) => Date.now() - (addedAt.get(id) || 0) >= cartLagMs).map(([id, n]) => `<div id="articleRow${id}">${n}</div>`).join('')}</body></html>`;
   return null;
 }
@@ -146,7 +173,7 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
     let html = cartRoute(u, route.request()) ?? (m ? sellerPage(m[1], u.searchParams) : pages[u.pathname]);
     if (!html) return route.fulfill({ status: 404, body: 'not found' });
     if (checkPages && html.includes('article-row')) html = '<!doctype html><html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>';
-    if (html.includes('article-row')) html = html.replace('</body>', `${pageScript}</body>`);
+    if (html.includes('data-ajax-action')) html = html.replace('</body>', `${pageScript}</body>`);
     if (cutOff.includes(u.pathname)) html = html.replace('</body>', '<button class="btn btn-primary">Show more results</button></body>');
     return route.fulfill({ status: 200, contentType: 'text/html', body: html });
   });
@@ -163,11 +190,14 @@ async function scenario(name, settings, expectTotal, extraChecks, cutOff = []) {
   await page.evaluate((s) => localStorage.setItem('cmopt:settings', JSON.stringify(s)), { sellerCountries: [4], delayMs: 200, timeBudgetMs: 500, excludeExpansions: '', v: 3, exact: false, shipping: { CH: TEST_CH }, ...settings });
   // Run exactly what a user pastes: decode the javascript: URL the way the browser does.
   await page.addScriptTag({ content: decodeURIComponent(bm.replace(/^javascript:/, '')) });
-  const deck = settings.source === 'deck';
-  await page.waitForSelector(deck ? '#cmopt-root textarea[data-k="deckText"]' : '#cmopt-root option:has-text("Mono Red")', { state: 'attached' });
+  const deck = settings.source === 'deck' || settings.source === 'cart';
+  await page.waitForSelector(settings.source === 'cart' ? '#cmopt-root >> text=Your cart is not changed' : deck ? '#cmopt-root textarea[data-k="deckText"]' : '#cmopt-root option:has-text("Mono Red")', { state: 'attached' });
   await page.screenshot({ path: `e2e-out/${name}-1-setup.png` });
   await page.click('#cmopt-root >> text=Fetch offers & optimize');
-  await page.waitForSelector('#cmopt-root >> text=Total (estimated)', { timeout: 90000 });
+  await page.waitForSelector('#cmopt-root >> text=Total (estimated)', { timeout: 90000 }).catch(async (e) => {
+    console.error(`FAIL [${name}]: no results. Log:\n${await page.locator('#cmopt-root main').innerText().catch(() => '')}`);
+    throw e;
+  });
   await page.screenshot({ path: `e2e-out/${name}-2-results.png` });
 
   const text = await page.locator('#cmopt-root main').innerText();
@@ -340,4 +370,29 @@ await scenario('decklist', {
   await homeSel.selectOption('CH');
   if (!(await chTiers()).startsWith('4 25 1.83')) fail('Swiss tiers not restored');
 });
+// "My cart": a cart that could be cheaper. Now: zurich_cards 2 Bolts
+// (1,20 + 1,83), geneva_tcg 2 Bolts (1,60 + 1,83), basel_magic Sheoldred and
+// a Counterspell (61,20 + tracked 8,50), lugano a Counterspell (0,90 + 1,83)
+// = 78,89 €. Best: the 76,53 € cart from the first run, 2,36 € less. The cart
+// changes only on "Apply", and then matches the plan exactly.
+richCart = true;
+cart.clear();
+for (const [id, n] of [['10', 2], ['12', 2], ['20', 1], ['30', 1], ['32', 1]]) cart.set(id, n);
+await scenario('my-cart', { source: 'cart', scanMode: 'auto' }, '76,53 €', async ({ page, text, requested, fail }) => {
+  if (!/Your cart now \(estimated\)\s*78,89 €/.test(text)) fail('current cart not costed at 78,89 €');
+  if (!/Saves about 2,36 €/.test(text)) fail('saving not shown');
+  if (!/Sheoldred, the Apocalypse\s*basel_magic 1 → geneva_tcg 1/.test(text)) fail('Sheoldred move not listed');
+  if (!/Counterspell\s*basel_magic 1, lugano 1 → geneva_tcg 2/.test(text)) fail('Counterspell moves not listed');
+  if (requested.some((r) => r.includes('AjaxAction'))) fail('the cart was changed before "Apply"');
+  const before = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
+  if (before !== '10x2 12x2 20x1 30x1 32x1') fail(`cart changed before Apply: ${before}`);
+  await page.click('#cmopt-root button[data-act="applyCart"]');
+  await page.waitForSelector('#cmopt-root >> text=Your cart now matches this plan', { timeout: 120000 }).catch(() => {});
+  const after = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
+  if (after !== '10x3 12x1 21x1 31x2') fail(`after Apply the cart holds ${after}`);
+  const msg = await page.locator('#cmopt-root main').innerText();
+  if (!/Your cart now matches this plan/.test(msg)) fail(`apply message: ${msg.slice(0, 600)}`);
+  await page.screenshot({ path: 'e2e-out/my-cart-3-applied.png' });
+});
+richCart = false;
 await browser.close();

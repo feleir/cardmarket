@@ -53,3 +53,22 @@ export function userOffersPage({ seller, listOptions = [], selected = null, rows
   <div id="UserOffersTable" class="table article-table"><div class="table-body">${rows.join('')}</div></div>
   ${pages > 1 ? `<nav>${Array.from({ length: pages }, (_, i) => `<a href="?idWantsList=${selected}&site=${i + 1}">${i + 1}</a>`).join(' ')}</nav>` : ''}</body></html>`;
 }
+
+// A shopping cart page: one block per seller, a row per article with a
+// remove form. Cardmarket's real cart markup was not available; this is a
+// plausible layout for the loose cart parser.
+export function cartPage(shipments) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><h1>Shopping Cart</h1>
+  ${shipments.map((sh) => `<section class="card shipment"><div class="card-header"><a href="/en/Magic/Users/${sh.seller}">${sh.seller}</a>
+    <span title="Item location: ${sh.country || 'Switzerland'}" class="icon"></span></div>
+    <table class="table"><tbody>${sh.items.map((it) => `<tr id="articleRow${it.id}" data-article-id="${it.id}">
+      <td class="amount">${it.amount}</td>
+      <td><a href="${it.productUrl}">${it.name}</a> <span class="expansion-symbol" title="${it.expansion}"></span>
+        <span class="icon" title="${it.lang || 'English'}"></span><span class="article-condition"><span class="badge">${it.cond || 'NM'}</span></span></td>
+      <td class="price"><span class="color-primary">${it.price}</span></td>
+      <td><form method="POST" data-ajax-action="ShoppingCart_RemoveArticle"><input type="hidden" name="__cmtkn" value="tok123"><input type="hidden" name="idArticle" value="${it.id}">
+        <select name="amount">${Array.from({ length: it.amount }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select>
+        <button type="submit" title="Remove" class="btn btn-sm"><span class="fonticon-delete"></span></button></form></td></tr>`).join('')}</tbody></table>
+    <div class="shipping">Shipping 1,83 €</div><div class="total">Total ${sh.total || ''}</div></section>`).join('')}
+  </body></html>`;
+}

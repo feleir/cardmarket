@@ -625,6 +625,29 @@ export function optimize(wants, opts = {}) {
   }
 }
 
+// What a given cart costs with the same shipping model as optimize():
+// picks[wantIndex] = [{ id, count }] (e.g. what the Cardmarket cart holds).
+export function cartCost(wants, picks, shipping, vatInParcelValue = false) {
+  const per = new Map();
+  let items = 0;
+  wants.forEach((w, wi) => {
+    for (const p of picks[wi] || []) {
+      const o = (w.offers || []).find((x) => x.id === p.id);
+      if (!o) continue;
+      items += o.price * p.count;
+      const g = per.get(o.seller) || { n: 0, v: 0, ref: o };
+      g.n += p.count;
+      g.v += (vatInParcelValue || !(o.listedPrice > 0) ? o.price : o.listedPrice) * p.count;
+      if (o.trackedOnly || (o.vat && !g.ref.vat)) g.ref = { ...g.ref, trackedOnly: g.ref.trackedOnly || o.trackedOnly, vat: Math.max(g.ref.vat || 0, o.vat || 0) };
+      per.set(o.seller, g);
+    }
+  });
+  const groups = [...per].map(([seller, g]) => ({ seller, cards: g.n,
+    shipping: Math.round(tierCost(sellerTiers(shipping, g.ref), g.n, g.v) * shippingVat(g.ref) * 100) / 100 }));
+  const ship = groups.reduce((a, g) => a + g.shipping, 0);
+  return { total: round(items + ship), itemsCost: round(items), shippingCost: round(ship), sellers: per.size, groups };
+}
+
 // Every copy from its cheapest available offer, ignoring shipping when
 // choosing - roughly what picking "cheapest" per card by hand gives you.
 export function baseline(wants, shipping, vatInParcelValue = false) {

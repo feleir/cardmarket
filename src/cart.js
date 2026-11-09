@@ -9,7 +9,7 @@
 // Nothing counts as added until the cart page shows the article. Every step
 // is kept in `cartLog` for the debug report.
 import { filterQuery } from './collect.js';
-import { isChallengePage } from './parse.js';
+import { isChallengePage, parseCart } from './parse.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
@@ -55,7 +55,11 @@ export async function cartArticleIds() {
   const html = await r.text();
   // The browser check instead of the cart: nothing can be told about it.
   if (isChallengePage(html)) return Object.assign(new Set(), { html: '', check: true });
-  const ids = new Set(html.match(/\d+/g) || []);
+  // The article numbers of the items the page lists; if it lists none in a
+  // way the parser knows, any number on the page (loose, but never misses).
+  let parsed = [];
+  try { parsed = parseCart(new DOMParser().parseFromString(html, 'text/html')).items.map((i) => i.articleId).filter(Boolean); } catch { /* ignore */ }
+  const ids = new Set(parsed.length ? parsed : html.match(/\d+/g) || []);
   ids.html = html;
   return ids;
 }
@@ -244,7 +248,9 @@ async function pressAll(items, onEach, pause) {
 // amount on top). Only items whose page could not be opened are retried.
 // Returns { added, failed, check } where check means Cardmarket's browser
 // check stopped the run (the user has to pass it in the tab, then retry).
-export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
+// allowExisting: also press articles already in the cart (to raise their
+// amount; Cardmarket adds it on top). The caller then checks the amounts.
+export async function addAll(items, onEach, { pauseMs = 1200, allowExisting = false } = {}) {
   let check = false;
   // Articles already in the cart are not pressed again, so running "Add all"
   // a second time (after a browser check, say) never doubles anything.
@@ -253,7 +259,7 @@ export async function addAll(items, onEach, { pauseMs = 1200 } = {}) {
     note({ step: 'check', added: 0, check: true, error: 'the cart page showed the browser check' });
     return { added: [], failed: items, check: true };
   }
-  const toSend = items.filter((it) => !before.has(it.offer.id));
+  const toSend = allowExisting ? items : items.filter((it) => !before.has(it.offer.id));
   if (toSend.length < items.length) note({ step: 'skip', alreadyInCart: items.length - toSend.length });
   items.filter((it) => before.has(it.offer.id)).forEach((it) => onEach?.(it, 'sent'));
   let pressed = new Set();
@@ -309,4 +315,91 @@ export function siteCartCode() {
     out.globals = Object.keys(window).filter((k) => /ajax|cart|basket|jcp/i.test(k)).slice(0, 30);
   } catch { /* ignore */ }
   return out;
+}
+
+// ---------- reading and changing the cart ----------
+
+const cartUrl = () => `/en/${game()}/ShoppingCart`;
+
+// Opens the cart page in a hidden frame and waits until what it shows stops
+// changing: parts of it load with the page's own scripts, which a plain
+// fetch of the page never runs (items were missing from it live).
+async function openCart() {
+  const { frame, check } = await openFrame(cartUrl());
+  let doc = null;
+  try { doc = frame.contentDocument; } catch { /* ignore */ }
+  if (check || isCheckDoc(doc)) { frame.remove(); throw new CheckPageError('check'); }
+  let last = -1;
+  let stableSince = Date.now();
+  const start = Date.now();
+  while (Date.now() - start < 12000) {
+    const n = doc?.querySelectorAll('a[href*="/Products/"]').length ?? 0;
+    if (n !== last) { last = n; stableSince = Date.now(); } else if (Date.now() - stableSince > 1500) break;
+    await sleep(300);
+  }
+  return { frame, doc };
+}
+
+// The cart as Cardmarket shows it: { items, sellers, diag }. diag holds a
+// sample of the markup for the debug report, since the layout is read loosely.
+export async function readCart() {
+  const { frame, doc } = await openCart();
+  try {
+    const { items, sellers } = parseCart(doc);
+    const first = doc.querySelector('a[href*="/Products/"]');
+    const sample = (first?.closest('section, .card, table, form') || first?.parentElement?.parentElement?.parentElement || doc.body)?.outerHTML || '';
+    const diag = { title: doc.title, productLinks: doc.querySelectorAll('a[href*="/Products/"]').length, items: items.length,
+      withoutId: items.filter((i) => !i.articleId).length, withoutSeller: items.filter((i) => !i.seller).length,
+      sample: sample.replace(/\s+/g, ' ').slice(0, 4000) };
+    note({ step: 'read cart', ...diag, sample: undefined });
+    return { items, sellers, diag };
+  } finally {
+    frame.remove();
+  }
+}
+
+// Remove articles from the cart with the cart page's own controls:
+// list = [{ articleId, quantity (to remove), keep (copies that stay) }].
+// Returns { removed, failed }, checked against the cart afterwards.
+const REMOVE = ['[data-ajax-action*="emove"]', '[data-ajax-action*="elete"]', 'form[action*="emove"] [type="submit"]',
+  'button[title*="emove"]', 'a[title*="emove"]', '[aria-label*="emove"]', '[aria-label*="elete"]',
+  '.fonticon-delete', '.fonticon-trash', '.fonticon-remove', '[class*="remove"]', '[class*="delete"]'].join(',');
+export async function removeFromCart(list) {
+  const { frame, doc } = await openCart();
+  const win = frame.contentWindow;
+  const w = watch(win);
+  try {
+    for (const it of list) {
+      const row = parseCart(doc, { withRows: true }).items.find((x) => x.articleId === it.articleId)?.row;
+      const hit = row?.querySelector(REMOVE);
+      if (!hit) {
+        note({ step: 'remove', article: it.articleId, error: row ? 'no remove control in the row' : 'article not found on the cart page',
+          ...(row ? { row: row.outerHTML.replace(/\s+/g, ' ').slice(0, 1500) } : {}) });
+        continue;
+      }
+      const form = hit.tagName === 'FORM' ? hit : hit.closest('form');
+      for (const el of (form || row).querySelectorAll('select[name*="mount"], input[name*="mount"]')) {
+        if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === String(it.quantity))) continue;
+        el.value = String(it.quantity);
+      }
+      // A matching form is pressed with its own button.
+      const press = hit.tagName === 'FORM' ? hit.querySelector('[type="submit"], button') || hit : hit.closest('button, a, input[type="submit"]') || hit;
+      press.click();
+      await settled(win, w);
+      // A confirmation dialog, if the page asks.
+      const confirm = [...doc.querySelectorAll('.modal.show button, .modal.show a.btn')].find((b) => /remove|delete|yes|ok|confirm|entfernen|l[öo]schen/i.test(b.textContent));
+      if (confirm) { confirm.click(); await settled(win, w); }
+      note({ step: 'remove', article: it.articleId, amount: it.quantity, ...(confirm ? { confirmed: true } : {}) });
+    }
+    await settled(win, w, { min: 300 });
+  } finally {
+    frame.remove();
+  }
+  const after = await readCart().catch(() => null);
+  const left = new Map((after?.items || []).map((i) => [i.articleId, i.quantity]));
+  const done = (it) => (left.get(it.articleId) || 0) <= (it.keep || 0);
+  const removed = after ? list.filter(done) : [];
+  const failed = after ? list.filter((it) => !done(it)) : list;
+  note({ step: 'remove check', removed: removed.length, failed: failed.map((i) => i.articleId) });
+  return { removed, failed, after };
 }
