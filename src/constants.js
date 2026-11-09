@@ -99,6 +99,7 @@ export const DEFAULT_SETTINGS = {
   v: 3,                   // settings format, for migrating saved settings
   source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist) | 'cart' (the Cardmarket cart)
   cartLikeForLike: true,  // cart: same language, condition at least as good as what is in it
+  cartMinCondition: 6,    // cart: replacements never below this (6 = Played or better, no Poor); 0 = no floor
   deckText: '',
   deckSideboard: true,
   deckSkipBasics: true,

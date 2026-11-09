@@ -83,6 +83,11 @@ function sellerPage(seller, q) {
 const cart = new Map();
 // richCart: serve a full cart page (the "My cart" run reads and changes it).
 let richCart = false;
+// cartNumbers: the cart page numbers its lines differently from the offer
+// pages ("9" + the article number), as it may live.
+let cartNumbers = false;
+const cartIdOf = (id) => (cartNumbers ? `9${id}` : id);
+const articleOf = (cartId) => (cartNumbers && cartId.startsWith('9') ? cartId.slice(1) : cartId);
 const ARTICLES = {
   10: { seller: 'zurich_cards', name: 'Lightning Bolt', productUrl: '/en/Magic/Products/Singles/Magic-2010/Lightning-Bolt', expansion: 'Magic 2010', price: '0,60 €' },
   12: { seller: 'geneva_tcg', name: 'Lightning Bolt', productUrl: '/en/Magic/Products/Singles/Magic-2010/Lightning-Bolt', expansion: 'Magic 2010', price: '0,80 €' },
@@ -130,8 +135,9 @@ function cartRoute(u, req) {
   }
   if (req.method() === 'POST' && u.pathname.startsWith('/en/Magic/AjaxAction/ShoppingCart_RemoveArticle')) {
     const f = fieldsOf(req.postData() || '');
-    const left = (cart.get(f.idArticle) || 0) - Number(f.amount || 1);
-    if (left > 0) cart.set(f.idArticle, left); else cart.delete(f.idArticle);
+    const id = articleOf(f.idArticle);
+    const left = (cart.get(id) || 0) - Number(f.amount || 1);
+    if (left > 0) cart.set(id, left); else cart.delete(id);
     return '{"ok":true}';
   }
   if (req.method() === 'POST') return '<html><body>home</body></html>'; // what PostGetAction did live
@@ -140,7 +146,7 @@ function cartRoute(u, req) {
     for (const [id, n] of cart) {
       const a = ARTICLES[id];
       if (!bySeller.has(a.seller)) bySeller.set(a.seller, []);
-      bySeller.get(a.seller).push({ id, amount: n, ...a });
+      bySeller.get(a.seller).push({ id: cartIdOf(id), amount: n, ...a });
     }
     return cartPage([...bySeller].map(([seller, items]) => ({ seller, items })));
   }
@@ -376,9 +382,11 @@ await scenario('decklist', {
 // = 78,89 €. Best: the 76,53 € cart from the first run, 2,36 € less. The cart
 // changes only on "Apply", and then matches the plan exactly.
 richCart = true;
+for (const numbers of [false, true]) {
+cartNumbers = numbers;
 cart.clear();
 for (const [id, n] of [['10', 2], ['12', 2], ['20', 1], ['30', 1], ['32', 1]]) cart.set(id, n);
-await scenario('my-cart', { source: 'cart', scanMode: 'auto' }, '76,53 €', async ({ page, text, requested, fail }) => {
+await scenario(numbers ? 'my-cart-numbers' : 'my-cart', { source: 'cart', scanMode: 'auto' }, '76,53 €', async ({ page, text, requested, fail }) => {
   if (!/Your cart now \(estimated\)\s*78,89 €/.test(text)) fail('current cart not costed at 78,89 €');
   if (!/Saves about 2,36 €/.test(text)) fail('saving not shown');
   if (!/Sheoldred, the Apocalypse\s*basel_magic 1 → geneva_tcg 1/.test(text)) fail('Sheoldred move not listed');
@@ -395,7 +403,15 @@ await scenario('my-cart', { source: 'cart', scanMode: 'auto' }, '76,53 €', asy
   if (after !== '10x3 12x1 21x1 31x2') fail(`after Apply the cart holds ${after}`);
   const msg = await page.locator('#cmopt-root main').innerText();
   if (!/Your cart now matches this plan/.test(msg)) fail(`apply message: ${msg.slice(0, 600)}`);
-  await page.screenshot({ path: 'e2e-out/my-cart-3-applied.png' });
+  await page.screenshot({ path: `e2e-out/my-cart${numbers ? '-numbers' : ''}-3-applied.png` });
+  // Run again on the new cart: nothing left to change.
+  await page.click('#cmopt-root [data-tab="setup"]');
+  await page.click('#cmopt-root >> text=Fetch offers & optimize');
+  await page.waitForSelector('#cmopt-root >> text=already as cheap as these offers allow', { timeout: 90000 }).catch(() => {});
+  const again = await page.locator('#cmopt-root main').innerText();
+  if (!/already as cheap as these offers allow/.test(again) || /Changes/.test(again)) fail(`second run on the new cart: ${again.slice(0, 700)}`);
 });
+}
 richCart = false;
+cartNumbers = false;
 await browser.close();
