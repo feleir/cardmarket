@@ -346,11 +346,14 @@ export async function readCart() {
   const { frame, doc } = await openCart();
   try {
     const { items, sellers } = parseCart(doc);
+    // A sample around the first seller's items, scripts and inline SVG left out.
     const first = doc.querySelector('a[href*="/Products/"]');
-    const sample = (first?.closest('section, .card, table, form') || first?.parentElement?.parentElement?.parentElement || doc.body)?.outerHTML || '';
+    let box = first;
+    while (box && box !== doc.body && !box.querySelector('a[href*="/Users/"]')) box = box.parentElement;
+    const sample = (box || doc.body).outerHTML.replace(/<script[\s\S]*?<\/script>|<svg[\s\S]*?<\/svg>/g, '');
     const diag = { title: doc.title, productLinks: doc.querySelectorAll('a[href*="/Products/"]').length, items: items.length,
       withoutId: items.filter((i) => !i.articleId).length, withoutSeller: items.filter((i) => !i.seller).length,
-      sample: sample.replace(/\s+/g, ' ').slice(0, 4000) };
+      sample: sample.replace(/\s+/g, ' ').slice(0, 12000) };
     note({ step: 'read cart', ...diag, sample: undefined });
     return { items, sellers, diag };
   } finally {

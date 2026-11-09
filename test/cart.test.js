@@ -40,3 +40,14 @@ test('cart page, another layout: divs, "2x" amounts, line totals next to unit pr
     ['888999000', 'geneva_tcg', 1, 9999, 'Black Lotus'],
   ]);
 });
+
+test('cart page: seller from the link address, items shown twice counted once', () => {
+  const item = (cls) => `<div class="${cls}"><span class="amount">4</span><a href="${P}/Mirage/Soulcatcher">Soulcatcher</a><span class="color-primary">0,25 €</span></div>`;
+  const html = `<html><body><section>
+    <div class="seller-header"><a href="/en/Magic/Users/Solde/Offers/Singles">More articles from this seller</a> <a href="/en/Magic/Users/Solde">Solde</a></div>
+    <div class="article" data-article-id="2200000001">${item('d-md-none')}${item('d-none d-md-flex')}</div>
+    <div class="article">${item('d-md-none')}</div><div class="article">${item('d-none d-md-flex')}</div>
+  </section></body></html>`;
+  const { items } = parseCart(doc(html));
+  assert.deepEqual(items.map((i) => [i.articleId, i.seller, i.quantity, i.price]), [['2200000001', 'Solde', 4, 0.25], ['', 'Solde', 4, 0.25]]);
+});

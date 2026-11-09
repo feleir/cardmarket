@@ -386,6 +386,9 @@ await scenario('my-cart', { source: 'cart', scanMode: 'auto' }, '76,53 €', asy
   if (requested.some((r) => r.includes('AjaxAction'))) fail('the cart was changed before "Apply"');
   const before = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');
   if (before !== '10x2 12x2 20x1 30x1 32x1') fail(`cart changed before Apply: ${before}`);
+  if (!/Read from your cart · 7 copies, 64,90 € in cards, 4 seller\(s\)/.test(text)) fail('what was read from the cart not shown');
+  if (!(await page.locator('#cmopt-root button[data-act="applyCart"][disabled]').count())) fail('Apply possible before the cart reading is confirmed');
+  await page.locator('#cmopt-root input[data-k="cartConfirmed"]').evaluate((el) => el.click());
   await page.click('#cmopt-root button[data-act="applyCart"]');
   await page.waitForSelector('#cmopt-root >> text=Your cart now matches this plan', { timeout: 120000 }).catch(() => {});
   const after = [...cart].map(([id, n]) => `${id}x${n}`).sort().join(' ');

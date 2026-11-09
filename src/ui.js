@@ -629,7 +629,7 @@ export function mount() {
     if (st.running) bar.innerHTML = '<button class="btn sec" data-act="stop">Stop</button>';
     else if (st.tab === 'results' && st.result) {
       bar.innerHTML = st.cartPicks
-        ? `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="applyCart" ${st.cartApplied || !cartChanges().length ? 'disabled' : ''}>Apply changes to cart</button>`
+        ? `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="applyCart" ${st.cartApplied || !st.cartConfirmed || !cartChanges().length ? 'disabled' : ''}>Apply changes to cart</button>`
         : `<button class="btn sec" data-act="copy">Copy list</button><button class="btn" data-act="addAll">Add all to cart</button>`;
     } else {
       bar.innerHTML = '<button class="btn" data-act="run">Fetch offers & optimize</button>';
@@ -644,7 +644,7 @@ export function mount() {
     if (deckMode && !deck.length) { st.log = ['Paste a decklist first (Setup → What to buy).']; st.tab = 'run'; render(); return; }
     if (!deckMode && !cartMode && !st.listUrl) { st.log = ['Pick a wants list first.']; st.tab = 'run'; render(); return; }
     st.running = true; st.tab = 'run'; st.log = []; st.progress = 0;
-    st.cartNow = null; st.cartMsg = null; st.cartState = new Map(); st.cartPicks = null;
+    st.cartNow = null; st.cartMsg = null; st.cartState = new Map(); st.cartPicks = null; st.cartConfirmed = false;
     if (!st.settings.homeCountry) st.log.push('Tip: pick your country under Setup → "You live in", so the shipping estimates fit where the parcels go.');
     render();
     const s = st.settings;
@@ -810,6 +810,22 @@ export function mount() {
     return out;
   }
 
+  // What was read from the cart, per seller, to check against the cart page
+  // before anything is changed: Apply stays off until it is confirmed.
+  function viewCartRead() {
+    const by = new Map();
+    for (const w of st.wants || []) for (const it of w.cartItems || []) {
+      if (!by.has(it.seller)) by.set(it.seller, []);
+      by.get(it.seller).push(it);
+    }
+    const copies = [...by.values()].flat().reduce((n, i) => n + i.quantity, 0);
+    const value = [...by.values()].flat().reduce((n, i) => n + i.quantity * i.price, 0);
+    return `<details ${st.cartConfirmed ? '' : 'open'}><summary><b>Read from your cart</b> · ${copies} copies, ${money(value)} in cards, ${by.size} seller(s)</summary>
+      ${[...by].map(([seller, items]) => `<div class="item"><div class="t"><b>${esc(seller || '?')}</b>${items.map((i) => `<div class="muted">${i.quantity}× ${esc(i.name)} · ${esc(i.expansion)}${i.language ? ` · ${esc(langName(i.language))}` : ''}${i.condition ? ` · ${esc(condCode(i.condition))}` : ''} · ${money(i.price)}</div>`).join('')}</div></div>`).join('')}
+      </details>
+      <label><input type="checkbox" data-k="cartConfirmed" ${st.cartConfirmed ? 'checked' : ''}> This matches my cart (sellers, cards, copies and prices). Apply stays off until it is ticked.</label>`;
+  }
+
   function viewCartCompare() {
     const now = st.cartNow;
     if (!now || !st.result) return '';
@@ -826,6 +842,7 @@ export function mount() {
         : d < -0.005 ? `<p class="warn">This plan costs ${money(-d)} more than your cart now.</p>`
           : '<p class="ok">Your cart is already as cheap as these offers allow.</p>'}
       ${changes.length ? `<b>Changes</b>${changes.join('')}` : ''}
+      ${viewCartRead()}
       ${st.cartApplied ? '<p class="muted">Applied. Run "My cart" again to check the new cart.</p>' : changes.length ? '<p class="muted">Tap "Apply changes to cart" to make them: new copies are added first, and the old ones are removed only for cards whose new copies all went in.</p>' : ''}
       <p class="muted">Both totals are estimated the same way, from the shipping tiers in Setup; the cart page shows Cardmarket's real shipping.</p>
     </div>`;
@@ -1288,6 +1305,7 @@ export function mount() {
     }
     const k = t.dataset.k;
     if (!k || k === 'countryFilter') return;
+    if (k === 'cartConfirmed') { st.cartConfirmed = t.checked; render(); return; }
     if (k === 'homeCountry') {
       // Each home country keeps its own tiers.
       const old = st.settings.homeCountry;

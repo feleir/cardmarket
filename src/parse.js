@@ -174,6 +174,7 @@ export function parseCart(doc, { withRows = false } = {}) {
   }
   const sellers = {};
   const items = [];
+  const seen = new Set();
   for (const row of rows) {
     const link = row.querySelector('a[href*="/Products/"]');
     const href = (link.getAttribute('href') || '').replace(/[?#].*$/, '');
@@ -210,7 +211,9 @@ export function parseCart(doc, { withRows = false } = {}) {
     for (let up = row.parentElement; up && !seller; up = up.parentElement) {
       const sl = [...up.querySelectorAll('a[href*="/Users/"]')].find((x) => !rows.some((r) => r.contains(x)));
       if (!sl) continue;
-      seller = flat(sl.textContent) || (sl.getAttribute('href').match(/\/Users\/([^/?#]+)/) || [])[1] || '';
+      // The name from the link's address: the cart also links "More
+      // articles from this seller" to /Users/<name>/Offers.
+      seller = decodeURIComponent((sl.getAttribute('href').match(/\/Users\/([^/?#]+)/) || [])[1] || '') || flat(sl.textContent);
       const head = sl.closest('header, .card-header, h1, h2, h3, h4, h5, div') || up;
       const loc = tipsIn(head).map(tipOf).map((t) => countryByName(t.replace(/^.*?:\s*/, ''))).find(Boolean);
       countryCode = loc?.code || '';
@@ -219,6 +222,11 @@ export function parseCart(doc, { withRows = false } = {}) {
     if (seller && !sellers[seller]) sellers[seller] = { countryCode };
     const price = Math.round(listed * (1 + vat / 100) * 100) / 100;
     if (!(price > 0)) continue;
+    // The page can show an item twice (phone and desktop layouts): one item
+    // per article number, or per identical item when there is none.
+    const sig = articleId || [seller, href, listed, quantity, language, condition, isFoil].join('|');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
     items.push({ articleId, name: flat(link.textContent), productUrl: href, expansion, seller, countryCode, quantity,
       price, listedPrice: listed, vat, language, condition, isFoil, ...(withRows ? { row } : {}) });
   }
