@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { loaderBookmarklet } from './loader.js';
 
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
-const common = { bundle: true, minify: true, format: 'iife', target: ['chrome100', 'firefox100', 'safari15'], write: false, legalComments: 'none', define: { 'globalThis.__CMOPT_EXT__': 'false' } };
+const common = { bundle: true, minify: true, format: 'iife', target: ['chrome100', 'firefox100', 'safari15'], write: false, legalComments: 'none', define: { 'globalThis.__CMOPT_EXT__': 'false', 'globalThis.__CMOPT_VERSION__': JSON.stringify(pkg.version) } };
 
 const main = await build({ ...common, entryPoints: ['src/main.js'] });
 const code = main.outputFiles[0].text.trim();
@@ -56,7 +56,7 @@ await writeFile('docs/index.html', template
 // Chrome extension (Manifest V3). The tool runs in the page's own world, so
 // it behaves exactly like the bookmarklet; all code ships in the package
 // (the Web Store does not allow remotely loaded code).
-const ext = await build({ ...common, entryPoints: ['src/extension.js'], define: { 'globalThis.__CMOPT_EXT__': 'true' } });
+const ext = await build({ ...common, entryPoints: ['src/extension.js'], define: { ...common.define, 'globalThis.__CMOPT_EXT__': 'true' } });
 await mkdir('extension/icons', { recursive: true });
 await mkdir('extension/highs', { recursive: true });
 await writeFile('extension/content.js', ext.outputFiles[0].text);

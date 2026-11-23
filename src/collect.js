@@ -204,7 +204,7 @@ export async function collectOffers(fetcher, wants, settings, progress) {
       };
       for (const v of cardPage.versions || []) consider(v.url, v.fromPrice, v.expansion);
       for (const o of found) consider(o.productUrl, o.price, o.expansion);
-      const visit = [...candidates.values()].sort((a, b) => a.from - b.from).slice(0, settings.maxVersions || 12);
+      const visit = [...candidates.values()].sort((a, b) => a.from - b.from).slice(0, settings.maxVersions || 30);
       for (const v of visit) {
         const r = await offersAt(fetcher, `${v.url}?${qs}`);
         found.push(...r.offers.map((o) => ({ ...o, expansion: o.expansion || v.expansion })));
@@ -215,12 +215,17 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     }
     // A card page that lists printings but no offers: visit the cheapest
     // printings one by one.
+    // A printing listed "from" more than the quantity-th cheapest copy found
+    // so far cannot help; one whose price could not be read is visited.
     if (cardPage && !cardPage.offers.length && cardPage.versions?.length) {
       const versions = cardPage.versions
         .filter((v) => !blockedExpansions(settings).some((k) => (v.expansion || '').toLowerCase().includes(k)))
         .sort((a, b) => a.fromPrice - b.fromPrice)
-        .slice(0, settings.maxVersions || 12);
+        .slice(0, settings.maxVersions || 30);
       for (const v of versions) {
+        const prices = found.filter((o) => !offerVerdict(o, want, f, settings)).map((o) => o.price).sort((a, b) => a - b);
+        const limit = prices[Math.max(1, want.quantity | 0) - 1] ?? Infinity;
+        if (Number.isFinite(v.fromPrice) && v.fromPrice > limit + 0.005) continue;
         const r = await offersAt(fetcher, `${toEnglish(v.url)}?${qs}`);
         found.push(...r.offers.map((o) => ({ ...o, expansion: o.expansion || v.expansion })));
         truncated ||= !!r.truncated;

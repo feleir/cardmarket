@@ -102,7 +102,7 @@ export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' E
 export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
-  v: 4,                   // settings format, for migrating saved settings
+  v: 5,                   // settings format, for migrating saved settings
   includeNotLegal: false, // also buy non-tournament-legal printings (WCD, Collectors' Edition, ...)
   source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist) | 'cart' (the Cardmarket cart)
   cartLikeForLike: true,  // cart: same language, condition at least as good as what is in it
@@ -124,7 +124,7 @@ export const DEFAULT_SETTINGS = {
   sellerTypes: [],        // [] = all; 0 private, 1 professional, 2 powerseller
   excludeSellers: '',
   excludeExpansions: DEFAULT_EXCLUDED_EXPANSIONS,
-  maxVersions: 12,
+  maxVersions: 30,
   maxSellers: 0,          // 0 = unlimited
   sellerPenalty: 0,       // extra cost per seller, to trade money for fewer parcels
   vatInParcelValue: false, // count the VAT Cardmarket adds toward the 25 € tracked-shipping limit

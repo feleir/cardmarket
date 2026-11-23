@@ -51,7 +51,9 @@ function loadSettings() {
       }
       // Version 3 made the exact solver the default: on for everyone once.
       if (s.v < 3) { s.exact = true; s.v = 3; }
-      s.v = Math.max(s.v || 0, 4);
+      // Version 5: up to 30 printings per card (the old default was 12).
+      if (s.v < 5 && s.maxVersions === 12) s.maxVersions = 30;
+      s.v = Math.max(s.v || 0, 5);
       return { ...DEFAULT_SETTINGS, ...s };
     }
   } catch { /* fall through */ }
@@ -59,6 +61,7 @@ function loadSettings() {
 }
 const saveSettings = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ } };
 
+const VERSION = globalThis.__CMOPT_VERSION__ || 'dev';
 const game = () => location.pathname.split('/').filter(Boolean)[1] || 'Magic';
 
 const CSS = `
@@ -967,8 +970,13 @@ export function mount() {
   // page had none or they were filtered out, and by what.
   function describeWant(w) {
     const n = w.offers.length;
-    if (n || !w.diag) return `${w.name}: ${n} offer(s)`;
+    if (!w.diag) return `${w.name}: ${n} offer(s)`;
     const d = w.diag;
+    if (n) {
+      // Which pages were read and what was left out, for every card.
+      const why = Object.entries(d.rejected).map(([k, v]) => `${v} ${k}`).join(', ');
+      return `${w.name}: ${n} offer(s) from ${d.pages.length} page(s)${d.printingsVisited ? `, ${d.printingsVisited} printing page(s)` : ''}${why ? `; removed: ${why}` : ''}`;
+    }
     const rows = d.pages.reduce((a, p) => a + (p.rows || 0), 0);
     const parsed = d.pages.reduce((a, p) => a + (p.parsed || 0), 0);
     const why = Object.entries(d.rejected).map(([k, v]) => `${v} ${k}`).join(', ');
@@ -1013,7 +1021,7 @@ export function mount() {
       return row;
     });
     return JSON.stringify({
-      tool: 'cmopt-cart2', mix: s.samePrinting ? Number(s.mixPremium) || 0 : 0, at: new Date().toISOString().slice(0, 16),
+      tool: 'cmopt-cart2', version: VERSION, mix: s.samePrinting ? Number(s.mixPremium) || 0 : 0, at: new Date().toISOString().slice(0, 16),
       home: s.homeCountry,
       shipping: { ...Object.fromEntries(Object.entries(shippingFor(s.homeCountry, s.shipping)).filter(([code]) => code === 'default' || sellers.some((x) => x[1] === code))), ...(s.sellerPenalty ? { penalty: s.sellerPenalty } : {}), ...(s.maxSellers ? { maxSellers: s.maxSellers } : {}) },
       total: r?.total, exact: r?.exact || '',
@@ -1028,12 +1036,14 @@ export function mount() {
     const empty = wants.find((w) => w.diag && !w.offers?.length);
     const pick = (w) => w && { name: w.name, url: w.url, kind: w.kind, quantity: w.quantity, languages: w.languages, minCondition: w.minCondition, flags: w.flags, maxPrice: w.maxPrice, expansion: w.expansion };
     return JSON.stringify({
-      tool: 'cmopt', at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
+      tool: 'cmopt', version: VERSION, at: new Date().toISOString(), page: location.pathname, ua: navigator.userAgent,
       settings: { source: s.source, homeCountry: s.homeCountry, sellerCountries: s.sellerCountries, languages: s.languages, minCondition: s.minCondition, foil: s.foil, anyPrinting: s.anyPrinting, minRating: s.minRating, allowUnrated: s.allowUnrated, sellerTypes: s.sellerTypes, scanMode: s.scanMode, exact: s.exact, delayMs: s.delayMs },
       wants: wants.length, withOffers: wants.filter((w) => w.offers?.length).length, notFound: wants.filter((w) => w.notFound).map((w) => w.name),
       firstWants: wants.slice(0, 3).map(pick),
       // Every entry as read: [id, name, quantity, expansion or '', any printing?]
       list: wants.map((w) => [w.idWant, w.name, w.quantity, w.expansion || '', w.kind === 'card' ? 1 : 0]),
+      // Per card: the pages read ([address, offer rows, read]) and what was removed.
+      pages: wants.map((w) => [w.name, (w.diag?.pages || []).map((p) => [String(p.url || '').replace(/^\/en\/\w+\/Products\/Singles\//, '').slice(0, 90), p.rows ?? 0, p.parsed ?? 0, ...(p.missing ? ['missing'] : [])]), w.diag?.rejected || {}]),
       wantsRowHtml: wants[0]?.rowHtml,
       emptyCard: empty && { ...pick(empty), diag: empty.diag },
       unreadRow: wants.flatMap((w) => w.diag?.pages || []).find((p) => p?.unread)?.unread,
