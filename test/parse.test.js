@@ -175,6 +175,12 @@ test('World Championship Deck printings are excluded for any-printing wants by d
   assert.equal(offerAllowed({ ...o, expansion: 'WCD 1999: Matt Linde' }, want, f, DEFAULT_SETTINGS), false);
   assert.equal(offerAllowed({ ...o, expansion: 'Pro Tour Collector Set' }, want, f, DEFAULT_SETTINGS), false);
   assert.equal(offerAllowed({ ...o, expansion: 'Mystery Booster 2' }, want, f, DEFAULT_SETTINGS), true);
+  // Allowed on request; art cards and oversized ones never, and the user's own list still applies.
+  const all = { ...DEFAULT_SETTINGS, includeNotLegal: true, excludeExpansions: 'Mystery Booster' };
+  assert.equal(offerAllowed({ ...o, expansion: 'WCD 1999: Matt Linde' }, want, f, all), true);
+  assert.equal(offerAllowed({ ...o, expansion: "Collectors' Edition" }, want, f, all), true);
+  assert.equal(offerAllowed({ ...o, expansion: 'Art Series: Modern Horizons' }, want, f, all), false);
+  assert.equal(offerAllowed({ ...o, expansion: 'Mystery Booster 2' }, want, f, all), false);
 });
 
 test('seller-page wants filter found through its form and the redirect', async () => {

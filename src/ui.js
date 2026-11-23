@@ -1,7 +1,7 @@
 // The overlay panel: settings, progress and results. Rendered into a shadow
 // root so Cardmarket's styles and ours cannot interfere. Built for a phone
 // screen first; on desktop it is a side panel.
-import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, DEFAULT_EXCLUDED_EXPANSIONS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS, BUILT_IN_TIERS } from './constants.js';
+import { COUNTRIES, CONDITIONS, LANGUAGES, DEFAULT_SETTINGS, OLD_EXCLUDED_EXPANSIONS, OLD_CH_TIERS, BUILT_IN_TIERS, NOT_LEGAL_EXPANSIONS, NOT_CARD_EXPANSIONS } from './constants.js';
 import { SHIPPING_SCRAPED } from './shipping-data.js';
 import { parseWantsOverview } from './parse.js';
 import { formatTiers, parseTiers, publishedShipping, shippingFor, sameTiers } from './shipping.js';
@@ -24,7 +24,15 @@ function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (s) {
-      if (OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions)) s.excludeExpansions = DEFAULT_EXCLUDED_EXPANSIONS;
+      // Version 4: the built-in non-legal and non-card printings left the
+      // user's list for their own setting; a list without WCD meant they
+      // wanted those printings.
+      if (s.excludeExpansions !== undefined && !(s.v >= 4)) {
+        const builtIn = [...NOT_LEGAL_EXPANSIONS, ...NOT_CARD_EXPANSIONS].map((x) => x.toLowerCase());
+        const lines = String(s.excludeExpansions).split(/\n+/).map((x) => x.trim()).filter(Boolean);
+        s.includeNotLegal = !OLD_EXCLUDED_EXPANSIONS.includes(s.excludeExpansions) && !lines.some((x) => /^(wcd|world championship)/i.test(x));
+        s.excludeExpansions = lines.filter((x) => !builtIn.includes(x.toLowerCase())).join('\n');
+      }
       if (s.delayMs === 1200) s.delayMs = DEFAULT_SETTINGS.delayMs; // the old default, before Cardmarket's browser checks
       // Settings from before the home country setting: Swiss if they bought
       // from Switzerland (the tiers then were Swiss), otherwise not set.
@@ -43,6 +51,7 @@ function loadSettings() {
       }
       // Version 3 made the exact solver the default: on for everyone once.
       if (s.v < 3) { s.exact = true; s.v = 3; }
+      s.v = Math.max(s.v || 0, 4);
       return { ...DEFAULT_SETTINGS, ...s };
     }
   } catch { /* fall through */ }
@@ -256,6 +265,8 @@ export function mount() {
       <details><summary>Printings / expansions</summary>
         <label>For "any printing" wants, check at most this many printings</label>
         <input type="number" min="1" max="60" data-k="maxVersions" value="${s.maxVersions}">
+        <label><input type="checkbox" data-k="includeNotLegal" ${s.includeNotLegal ? 'checked' : ''}> Also buy printings that are not tournament-legal: World Championship Decks, Collectors' Edition, International Edition, Pro Tour Collector Set</label>
+        <p class="muted">They have gold borders or square corners and other card backs. Art Series and oversized cards are never bought: they are not the card.</p>
         <label>Never buy from expansions containing (one per line)</label>
         <textarea data-k="excludeExpansions">${esc(s.excludeExpansions)}</textarea>
       </details>

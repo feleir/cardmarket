@@ -85,18 +85,25 @@ export const defaultShipping = (home) => ({ default: GENERIC_TIERS, ...(DOMESTIC
 export const DEFAULT_SHIPPING = defaultShipping('CH');
 export const BUILT_IN_TIERS = [GENERIC_TIERS, DOMESTIC.CH];
 
-// Printings that are not tournament-legal. Cardmarket names the World
-// Championship decks "WCD <year>: <player>" (and the 1996 set "Pro Tour
-// Collector Set"), so match those names, not only the long form.
-export const DEFAULT_EXCLUDED_EXPANSIONS = "World Championship Decks\nWCD\nPro Tour Collector Set\nCollectors' Edition\nInternational Edition\nOversized\nArt Series";
-// Defaults earlier versions saved into settings; replaced on load.
-export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' Edition\nInternational Edition\nOversized\nArt Series"];
+// Printings that are not tournament-legal (gold borders or square corners,
+// other backs), skipped unless "include non-legal printings" is on.
+// Cardmarket names the World Championship decks "WCD <year>: <player>" (and
+// the 1996 set "Pro Tour Collector Set"), so match those names too.
+export const NOT_LEGAL_EXPANSIONS = ['World Championship Decks', 'WCD', 'Pro Tour Collector Set', "Collectors' Edition", 'International Edition'];
+// Not playable copies of the card at all: always skipped.
+export const NOT_CARD_EXPANSIONS = ['Oversized', 'Art Series'];
+// The user's own list starts empty.
+export const DEFAULT_EXCLUDED_EXPANSIONS = '';
+// Lists earlier versions saved with the built-in names in them.
+export const OLD_EXCLUDED_EXPANSIONS = ["World Championship Decks\nCollectors' Edition\nInternational Edition\nOversized\nArt Series",
+  "World Championship Decks\nWCD\nPro Tour Collector Set\nCollectors' Edition\nInternational Edition\nOversized\nArt Series"];
 
 // Swiss tiers earlier versions saved into settings; replaced on load.
 export const OLD_CH_TIERS = [[1.6, 2.6, 3.6, 8.5, 11]];
 
 export const DEFAULT_SETTINGS = {
-  v: 3,                   // settings format, for migrating saved settings
+  v: 4,                   // settings format, for migrating saved settings
+  includeNotLegal: false, // also buy non-tournament-legal printings (WCD, Collectors' Edition, ...)
   source: 'wants',        // 'wants' (a Cardmarket wants list) | 'deck' (a pasted decklist) | 'cart' (the Cardmarket cart)
   cartLikeForLike: true,  // cart: same language, condition at least as good as what is in it
   cartMinCondition: 6,    // cart: replacements never below this (6 = Played or better, no Poor); 0 = no floor

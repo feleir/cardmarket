@@ -1,6 +1,7 @@
 // Turns a wants list into candidate offers per want: builds Cardmarket's
 // filter URLs from the want and the user's settings, fetches the pages, and
 // re-checks every offer against the same rules client-side.
+import { NOT_LEGAL_EXPANSIONS, NOT_CARD_EXPANSIONS } from './constants.js';
 import { parseOffers, parseVersionLinks, parseWantsList, pageCount, isLoggedOut, wantsFilterParam, isWantsFilterApplied, isTruncated } from './parse.js';
 
 export const toEnglish = (href) => {
@@ -39,6 +40,10 @@ export function filterQuery(f) {
 }
 
 const keywordList = (text) => String(text || '').split(/[\n,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+// Expansions never bought from: art cards and oversized ones, the
+// non-legal printings unless allowed, and the user's own list.
+export const blockedExpansions = (settings) => [...NOT_CARD_EXPANSIONS, ...(settings.includeNotLegal ? [] : NOT_LEGAL_EXPANSIONS)]
+  .map((x) => x.toLowerCase()).concat(keywordList(settings.excludeExpansions));
 
 // Why an offer is rejected, or '' if it is allowed. The reasons are counted
 // per card so a card with no offers says what removed them.
@@ -59,7 +64,7 @@ export function offerVerdict(o, want, f, settings, { needsCart = false } = {}) {
   if (keywordList(settings.excludeSellers).includes(o.seller.toLowerCase())) return 'blocked seller';
   if (want.kind === 'card' || want.anyPrinting) {
     const exp = (o.expansion || '').toLowerCase();
-    if (keywordList(settings.excludeExpansions).some((k) => exp.includes(k))) return 'expansion';
+    if (blockedExpansions(settings).some((k) => exp.includes(k))) return 'expansion';
   }
   return '';
 }
@@ -182,7 +187,7 @@ export async function collectOffers(fetcher, wants, settings, progress) {
     // printings one by one.
     if (cardPage && !cardPage.offers.length && cardPage.versions?.length) {
       const versions = cardPage.versions
-        .filter((v) => !keywordList(settings.excludeExpansions).some((k) => (v.expansion || '').toLowerCase().includes(k)))
+        .filter((v) => !blockedExpansions(settings).some((k) => (v.expansion || '').toLowerCase().includes(k)))
         .sort((a, b) => a.fromPrice - b.fromPrice)
         .slice(0, settings.maxVersions || 12);
       for (const v of versions) {

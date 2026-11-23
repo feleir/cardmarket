@@ -57,7 +57,7 @@ It runs the same code as the bookmarklet, in the page's own JavaScript world, be
    - **Keep all copies of a card in one printing** unless mixing printings saves more than X € per card (default 2 €). For cards whose copies can come from several printings: any printing, decklists, wants for any expansion.
    - Set the minimum seller rating, seller type and sellers to block.
    - **Max sellers**, **Extra cost per seller**: trade money for fewer parcels.
-   - **Printings**: for "any printing" wants, how many printings to check (cheapest first), and expansions to never buy from. Defaults include World Championship Decks and Collectors' Edition, which aren't tournament-legal.
+   - **Printings**: for "any printing" wants, how many printings to check (cheapest first), and your own expansions to never buy from. Printings that aren't tournament-legal (World Championship Decks, Collectors' Edition, International Edition, Pro Tour Collector Set) are skipped unless you tick **Also buy printings that are not tournament-legal**; Art Series and oversized cards are never bought.
    - **Shipping estimates**: the tiers in use per seller country, one per line: `maxCards maxValue price [tracked]`. Card counts come from the letter weights (20 g: 4 cards, 50 g: 17, 100 g: 40; heavier ones at about 2.2 g a card). Editing a country's tiers makes them yours, kept per home country, and they win over the published ones; **Use Cardmarket's prices again** drops your edits. `npm run shipping` re-scrapes the table (`data/shipping-raw.json` → `src/shipping-data.js`).
 2. **Fetch offers & optimize.** It loads about one page per want, more for "any printing" wants.
 3. **Results:**
