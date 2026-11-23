@@ -283,6 +283,37 @@ test('any printing: a want for one printing also gets offers for its other print
   assert.equal(matchWants({ productUrl: `${P}/Dominaria-Remastered/Aquamoeba`, name: 'Aquamoeba' }, [want]).length, 1);
 });
 
+test('any printing: printings that could hold cheaper copies are visited too', async () => {
+  const { collectOffers } = await import('../src/collect.js');
+  const P = '/en/Magic/Products/Singles';
+  const wcd = `${P}/WCD-1999-Jakub-Slemr/Wasteland`;
+  const pages = {
+    // The all-printings page: a sample, without ThreeForOne-AT's copies.
+    '/en/Magic/Cards/Wasteland': productPage({ title: 'Wasteland', expansion: '', rows: [
+      offerRow({ id: 2, seller: 'bronhy', price: '18,85 €', expansion: 'WCD 1999: Jakub Šlemr', productUrl: wcd }),
+      offerRow({ id: 3, seller: 'b', price: '23,00 €', expansion: 'Eternal Masters', productUrl: `${P}/Eternal-Masters/Wasteland` }),
+      offerRow({ id: 4, seller: 'c', price: '99,00 €', expansion: 'Expeditions', productUrl: `${P}/Expeditions/Wasteland` }),
+    ] }),
+    // The printing's own page, cheapest first.
+    [wcd]: productPage({ title: 'Wasteland', expansion: 'WCD 1999: Jakub Šlemr', rows: [
+      offerRow({ id: 5, seller: 'ThreeForOne-AT', price: '17,85 €', count: 2, cond: 'GD' }),
+      offerRow({ id: 2, seller: 'bronhy', price: '18,85 €' }),
+    ] }),
+  };
+  const fetched = [];
+  const mem = new Map();
+  const fetcher = {
+    cached: (u) => mem.get(u), store: (u, v) => mem.set(u, v),
+    doc: async (u) => { fetched.push(u); const html = pages[u.split('?')[0]]; return html ? doc(html) : null; },
+  };
+  const want = { idWant: '1', kind: 'card', name: 'Wasteland', url: '/en/Magic/Cards/Wasteland', expansion: '', quantity: 2, languages: [], minCondition: 0, flags: {} };
+  await collectOffers(fetcher, [want], { ...DEFAULT_SETTINGS, sellerCountries: [], includeNotLegal: true });
+  assert.deepEqual(want.offers.map((o) => [o.id, o.seller, o.price]).sort((a, b) => a[2] - b[2]).slice(0, 2), [['5', 'ThreeForOne-AT', 17.85], ['2', 'bronhy', 18.85]]);
+  assert.ok(fetched.some((u) => u.startsWith(wcd)), 'the WCD printing page was read');
+  // One that cannot beat the 2nd cheapest copy found (23 €) is not.
+  assert.ok(!fetched.some((u) => u.includes('Expeditions')));
+});
+
 test('a page that holds back offers is read again per seller type', async () => {
   const { collectOffers } = await import('../src/collect.js');
   const P = '/en/Magic/Products/Singles';

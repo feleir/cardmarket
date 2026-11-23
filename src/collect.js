@@ -183,6 +183,36 @@ export async function collectOffers(fetcher, wants, settings, progress) {
         truncated = (await deeper(fetcher, cardPath, cardPage, f, found, diag)) || truncated;
       }
     }
+    // An all-printings page that lists offers shows a sample across the
+    // printings, not every cheap copy of each (live, a seller's cheaper WCD
+    // copies were missing from it). So also visit each printing that could
+    // still beat what was found: those listed "from" at most the price of the
+    // quantity-th cheapest copy so far, and those the found offers come from.
+    // A printing's own page lists its copies cheapest first.
+    if (cardPage && cardPage.offers.length) {
+      const needsCart0 = found.some((o) => o.cartForm || o.cartModal);
+      const prices = found.filter((o) => !offerVerdict(o, want, f, settings, { needsCart: needsCart0 })).map((o) => o.price).sort((a, b) => a - b);
+      const limit = prices[Math.max(1, want.quantity | 0) - 1] ?? Infinity;
+      const visited = new Set([cleanPath(path), cleanPath(cardUrlFor(want, page) || '')]);
+      const candidates = new Map();
+      const consider = (url, from, expansion) => {
+        const u = cleanPath(url || '');
+        if (!u || visited.has(u) || !/\/Products\//.test(u) || !(from <= limit + 0.005)) return;
+        if (blockedExpansions(settings).some((k) => String(expansion || '').toLowerCase().includes(k))) return;
+        const c = candidates.get(u);
+        if (!c || from < c.from) candidates.set(u, { url: u, from, expansion });
+      };
+      for (const v of cardPage.versions || []) consider(v.url, v.fromPrice, v.expansion);
+      for (const o of found) consider(o.productUrl, o.price, o.expansion);
+      const visit = [...candidates.values()].sort((a, b) => a.from - b.from).slice(0, settings.maxVersions || 12);
+      for (const v of visit) {
+        const r = await offersAt(fetcher, `${v.url}?${qs}`);
+        found.push(...r.offers.map((o) => ({ ...o, expansion: o.expansion || v.expansion })));
+        truncated ||= !!r.truncated;
+        diag.pages.push(r.diag);
+      }
+      diag.printingsVisited = visit.length;
+    }
     // A card page that lists printings but no offers: visit the cheapest
     // printings one by one.
     if (cardPage && !cardPage.offers.length && cardPage.versions?.length) {
